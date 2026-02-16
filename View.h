@@ -6,23 +6,12 @@
  *
  * @details
  * View<Ts...> provides a way to iterate over all entities that possess
- * every component type in Ts. It does NOT copy or cache entity lists;
- * it iterates on-the-fly by walking the smallest ComponentStore and
- * probing the others for each entity.
+ * every component type in Ts.
  *
- * This is the standard sparse-set ECS iteration strategy (same as EnTT):
- * - Find the store with the fewest entities (the "pivot").
- * - For each entity in the pivot, check contains() on all other stores.
- * - Only yield entities present in ALL stores.
- *
- * The O(1) contains() of SparseSet makes the probe step fast.
- * Iterating the smallest set minimizes the total number of probes.
- *
- * Single-component views skip the intersection entirely and iterate
- * the dense array directly — no probing needed.
- *
- * @note Thread Safety: NOT thread-safe during iteration if any store
- *       is being modified concurrently.
+ * Phase 2 fix: Views now use ComponentStore::entities() to yield full
+ * Entity handles (with generation) during iteration. Previously, views
+ * used EntityTraits::toEntity() which produced generation-0 entities —
+ * making them useless for destroy(), isAlive(), or command buffer ops.
  */
 
 #include <algorithm>
@@ -35,43 +24,18 @@
 namespace fatp_ecs
 {
 
-// Forward declaration
 class Registry;
 
 // =============================================================================
 // View - Multi-Component Iteration
 // =============================================================================
 
-/**
- * @brief Iterates entities possessing all component types in Ts.
- *
- * @tparam Ts Component types to require.
- *
- * @details
- * View does not own or copy data. It holds pointers to ComponentStores
- * owned by the Registry. The View is lightweight and intended to be
- * created on-the-fly per iteration, not stored long-term.
- *
- * Usage:
- * @code
- * auto view = registry.view<Position, Velocity>();
- * view.each([](Entity e, Position& pos, Velocity& vel) {
- *     pos.x += vel.dx;
- * });
- * @endcode
- */
 template <typename... Ts>
 class View
 {
     static_assert(sizeof...(Ts) > 0, "View requires at least one component type");
 
 public:
-    /**
-     * @brief Constructs a View over the given component stores.
-     *
-     * @param stores Pointers to ComponentStore<T> for each T in Ts.
-     *               Any nullptr means no entities will match.
-     */
     explicit View(ComponentStore<Ts>*... stores)
         : mStores(stores...)
     {
@@ -81,21 +45,6 @@ public:
     // Iteration
     // =========================================================================
 
-    /**
-     * @brief Calls func(Entity, T&...) for each entity with all components.
-     *
-     * @tparam Func Callable with signature void(Entity, Ts&...).
-     * @param func The function to invoke per matching entity.
-     *
-     * @details
-     * For single-component views, iterates the dense array directly.
-     * For multi-component views, iterates the smallest store and probes
-     * the others.
-     *
-     * @note The callback receives mutable references to components.
-     *       Modifying component values during iteration is safe.
-     *       Adding or removing components during iteration is NOT safe.
-     */
     template <typename Func>
     void each(Func&& func)
     {
@@ -114,12 +63,6 @@ public:
         }
     }
 
-    /**
-     * @brief Calls func(Entity, const T&...) for each matching entity.
-     *
-     * @tparam Func Callable with signature void(Entity, const Ts&...).
-     * @param func The function to invoke per matching entity.
-     */
     template <typename Func>
     void each(Func&& func) const
     {
@@ -138,15 +81,6 @@ public:
         }
     }
 
-    /**
-     * @brief Returns the number of entities that match this view.
-     *
-     * @details
-     * For single-component views, this is exact (O(1)).
-     * For multi-component views, this requires full iteration (O(n*k)
-     * where n is the smallest store size and k is the number of stores).
-     * Prefer checking empty() or using each() directly.
-     */
     [[nodiscard]] std::size_t count() const
     {
         if (anyStoreNull())
@@ -185,20 +119,19 @@ private:
     }
 
     // =========================================================================
-    // Single-component iteration (no intersection needed)
+    // Single-component iteration
     // =========================================================================
 
     template <typename Func>
     void eachSingleComponent(Func&& func)
     {
         auto* store = std::get<0>(mStores);
-        const auto& denseEntities = store->dense();
-        const std::size_t count = store->size();
+        const auto& fullEntities = store->entities();
+        const std::size_t cnt = store->size();
 
-        for (std::size_t i = 0; i < count; ++i)
+        for (std::size_t i = 0; i < cnt; ++i)
         {
-            Entity entity = EntityTraits::toEntity(denseEntities[i]);
-            func(entity, store->dataAt(i));
+            func(fullEntities[i], store->dataAt(i));
         }
     }
 
@@ -206,13 +139,12 @@ private:
     void eachSingleComponentConst(Func&& func) const
     {
         const auto* store = std::get<0>(mStores);
-        const auto& denseEntities = store->dense();
-        const std::size_t count = store->size();
+        const auto& fullEntities = store->entities();
+        const std::size_t cnt = store->size();
 
-        for (std::size_t i = 0; i < count; ++i)
+        for (std::size_t i = 0; i < cnt; ++i)
         {
-            Entity entity = EntityTraits::toEntity(denseEntities[i]);
-            func(entity, store->dataAt(i));
+            func(fullEntities[i], store->dataAt(i));
         }
     }
 
@@ -220,9 +152,6 @@ private:
     // Multi-component iteration (smallest-set intersection)
     // =========================================================================
 
-    /**
-     * @brief Finds which store index has the fewest entities.
-     */
     [[nodiscard]] std::size_t findSmallestStoreIndex() const
     {
         return findSmallestImpl(std::index_sequence_for<Ts...>{});
@@ -243,18 +172,12 @@ private:
         return minIdx;
     }
 
-    /**
-     * @brief Checks if entity exists in all stores except the pivot.
-     */
     template <std::size_t PivotIdx, std::size_t... Is>
     [[nodiscard]] bool entityInAllOthers(Entity entity, std::index_sequence<Is...>) const
     {
         return ((Is == PivotIdx || std::get<Is>(mStores)->has(entity)) && ...);
     }
 
-    /**
-     * @brief Gets component references for an entity from all stores.
-     */
     template <std::size_t... Is>
     [[nodiscard]] auto getComponents(Entity entity, std::index_sequence<Is...>)
     {
@@ -270,15 +193,6 @@ private:
                 *std::get<Is>(mStores)->tryGet(entity))...);
     }
 
-    /**
-     * @brief Iterates using a specific store index as the pivot.
-     *
-     * @details
-     * We use a compile-time dispatch to iterate over each possible
-     * pivot index. At runtime, only the one matching the smallest
-     * store actually executes. This avoids virtual dispatch or
-     * function pointer indirection.
-     */
     template <typename Func>
     void eachMultiComponent(Func&& func)
     {
@@ -299,7 +213,6 @@ private:
     void eachWithPivotDispatch(Func&& func, std::size_t pivotIdx,
                                std::index_sequence<Is...>)
     {
-        // Expand a fold that dispatches to the correct pivot at runtime.
         ((pivotIdx == Is ? (eachWithPivot<Is>(std::forward<Func>(func)), true) : false) || ...);
     }
 
@@ -314,13 +227,13 @@ private:
     void eachWithPivot(Func&& func)
     {
         auto* pivotStore = std::get<PivotIdx>(mStores);
-        const auto& denseEntities = pivotStore->dense();
-        const std::size_t count = pivotStore->size();
+        const auto& fullEntities = pivotStore->entities();
+        const std::size_t cnt = pivotStore->size();
         constexpr auto allIndices = std::index_sequence_for<Ts...>{};
 
-        for (std::size_t i = 0; i < count; ++i)
+        for (std::size_t i = 0; i < cnt; ++i)
         {
-            Entity entity = EntityTraits::toEntity(denseEntities[i]);
+            Entity entity = fullEntities[i];
 
             if (entityInAllOthers<PivotIdx>(entity, allIndices))
             {
@@ -334,17 +247,16 @@ private:
     void eachWithPivotConst(Func&& func) const
     {
         const auto* pivotStore = std::get<PivotIdx>(mStores);
-        const auto& denseEntities = pivotStore->dense();
-        const std::size_t count = pivotStore->size();
+        const auto& fullEntities = pivotStore->entities();
+        const std::size_t cnt = pivotStore->size();
         constexpr auto allIndices = std::index_sequence_for<Ts...>{};
 
-        for (std::size_t i = 0; i < count; ++i)
+        for (std::size_t i = 0; i < cnt; ++i)
         {
-            Entity entity = EntityTraits::toEntity(denseEntities[i]);
+            Entity entity = fullEntities[i];
 
             if (entityInAllOthers<PivotIdx>(entity, allIndices))
             {
-                // Use tryGet from each store and cast to const
                 std::apply(
                     [&](auto*... ptrs) { func(entity, static_cast<const Ts&>(*ptrs)...); },
                     std::make_tuple(std::get<ComponentStore<Ts>*>(mStores)->tryGet(entity)...));
