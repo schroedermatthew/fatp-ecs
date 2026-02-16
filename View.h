@@ -3,16 +3,16 @@
 /**
  * @file View.h
  * @brief Component view for iterating entities with specific component sets.
- *
- * @details
- * View<Ts...> provides a way to iterate over all entities that possess
- * every component type in Ts.
- *
- * Phase 2 fix: Views now use ComponentStore::entities() to yield full
- * Entity handles (with generation) during iteration. Previously, views
- * used EntityTraits::toEntity() which produced generation-0 entities —
- * making them useless for destroy(), isAlive(), or command buffer ops.
  */
+
+// FAT-P components used (indirectly via ComponentStore):
+// - SparseSetWithData: Dense array iteration for cache-friendly access
+//
+// Views iterate the smallest ComponentStore and probe the others for
+// intersection (smallest-set intersection strategy). Entity handles
+// are read from ComponentStore::entities() which provides full 64-bit
+// Entity values with generation, enabling safe use of the entities for
+// destroy(), isAlive(), and command buffer operations.
 
 #include <algorithm>
 #include <cstddef>
@@ -30,6 +30,13 @@ class Registry;
 // View - Multi-Component Iteration
 // =============================================================================
 
+/**
+ * @brief Iterates all entities possessing every component type in Ts.
+ *
+ * @tparam Ts Component types to match.
+ *
+ * @note Thread-safety: NOT thread-safe. Use Scheduler for parallel iteration.
+ */
 template <typename... Ts>
 class View
 {
@@ -173,7 +180,8 @@ private:
     }
 
     template <std::size_t PivotIdx, std::size_t... Is>
-    [[nodiscard]] bool entityInAllOthers(Entity entity, std::index_sequence<Is...>) const
+    [[nodiscard]] bool entityInAllOthers(Entity entity,
+                                         std::index_sequence<Is...>) const
     {
         return ((Is == PivotIdx || std::get<Is>(mStores)->has(entity)) && ...);
     }
@@ -182,15 +190,6 @@ private:
     [[nodiscard]] auto getComponents(Entity entity, std::index_sequence<Is...>)
     {
         return std::forward_as_tuple(*std::get<Is>(mStores)->tryGet(entity)...);
-    }
-
-    template <std::size_t... Is>
-    [[nodiscard]] auto getComponentsConst(Entity entity, std::index_sequence<Is...>) const
-    {
-        return std::forward_as_tuple(
-            static_cast<const typename std::tuple_element_t<Is, std::tuple<ComponentStore<Ts>*...>>
-                             ::element_type::DataType&>(
-                *std::get<Is>(mStores)->tryGet(entity))...);
     }
 
     template <typename Func>
@@ -213,14 +212,20 @@ private:
     void eachWithPivotDispatch(Func&& func, std::size_t pivotIdx,
                                std::index_sequence<Is...>)
     {
-        ((pivotIdx == Is ? (eachWithPivot<Is>(std::forward<Func>(func)), true) : false) || ...);
+        ((pivotIdx == Is
+              ? (eachWithPivot<Is>(std::forward<Func>(func)), true)
+              : false) ||
+         ...);
     }
 
     template <typename Func, std::size_t... Is>
     void eachWithPivotDispatchConst(Func&& func, std::size_t pivotIdx,
                                     std::index_sequence<Is...>) const
     {
-        ((pivotIdx == Is ? (eachWithPivotConst<Is>(std::forward<Func>(func)), true) : false) || ...);
+        ((pivotIdx == Is
+              ? (eachWithPivotConst<Is>(std::forward<Func>(func)), true)
+              : false) ||
+         ...);
     }
 
     template <std::size_t PivotIdx, typename Func>
@@ -238,7 +243,8 @@ private:
             if (entityInAllOthers<PivotIdx>(entity, allIndices))
             {
                 auto components = getComponents(entity, allIndices);
-                std::apply([&](auto&... comps) { func(entity, comps...); }, components);
+                std::apply([&](auto&... comps) { func(entity, comps...); },
+                           components);
             }
         }
     }
@@ -258,8 +264,11 @@ private:
             if (entityInAllOthers<PivotIdx>(entity, allIndices))
             {
                 std::apply(
-                    [&](auto*... ptrs) { func(entity, static_cast<const Ts&>(*ptrs)...); },
-                    std::make_tuple(std::get<ComponentStore<Ts>*>(mStores)->tryGet(entity)...));
+                    [&](auto*... ptrs) {
+                        func(entity, static_cast<const Ts&>(*ptrs)...);
+                    },
+                    std::make_tuple(
+                        std::get<ComponentStore<Ts>*>(mStores)->tryGet(entity)...));
             }
         }
     }

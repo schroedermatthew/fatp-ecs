@@ -3,25 +3,16 @@
 /**
  * @file Registry.h
  * @brief Central entity-component registry for the FAT-P ECS framework.
- *
- * @details
- * Registry owns all entity lifecycle and component storage.
- * It is the primary user-facing API for the ECS framework.
- *
- * Phase 2 additions:
- * - EventBus integration: entity/component lifecycle signals
- * - ComponentMask per entity for fast archetype matching
- * - CommandBuffer flush support
- *
- * FAT-P components used:
- * - SlotMap: Entity allocator with generational safety
- * - FastHashMap: Type-erased component store registry
- * - SparseSetWithData: Per-component-type storage (via ComponentStore<T>)
- * - StrongId: Type-safe Entity handles (via Entity.h)
- * - SmallVector: Internal buffers for entity queries
- * - Signal: Event system (via EventBus)
- * - BitSet: Component masks (via ComponentMask.h)
  */
+
+// FAT-P components used:
+// - SlotMap: Entity allocator with generational safety
+// - FastHashMap: Type-erased component store registry
+// - SparseSetWithData: Per-component-type storage (via ComponentStore<T>)
+// - StrongId: Type-safe Entity handles (via Entity.h)
+// - SmallVector: Stack-allocated entity query results
+// - Signal: Event system (via EventBus)
+// - BitSet: Component masks (via ComponentMask.h)
 
 #include <cstddef>
 #include <cstdint>
@@ -66,9 +57,7 @@ TypeId typeId() noexcept
     return id;
 }
 
-/**
- * @brief Builds a ComponentMask from a list of component types.
- */
+/// @brief Builds a ComponentMask from a list of component types.
 template <typename... Ts>
 ComponentMask makeComponentMask()
 {
@@ -81,21 +70,19 @@ ComponentMask makeComponentMask()
 // EntityMetadata
 // =============================================================================
 
-/**
- * @brief Metadata stored per entity in the SlotMap.
- *
- * Phase 2 adds a ComponentMask for fast archetype queries.
- */
+/// @brief Per-entity data stored in the SlotMap.
 struct EntityMetadata
 {
     bool alive = true;
-    ComponentMask mask;  ///< BitSet tracking which component types are attached.
+    ComponentMask mask;
 };
 
 // =============================================================================
 // Registry
 // =============================================================================
 
+/// @brief Central coordinator for entity lifecycle and component storage.
+/// @note Thread-safety: NOT thread-safe. Use Scheduler for parallel access.
 class Registry
 {
 public:
@@ -106,7 +93,6 @@ public:
 
     Registry(const Registry&) = delete;
     Registry& operator=(const Registry&) = delete;
-
     Registry(Registry&&) noexcept = default;
     Registry& operator=(Registry&&) noexcept = default;
 
@@ -139,15 +125,14 @@ public:
         // Fire destruction event before removing anything
         mEvents.onEntityDestroyed.emit(entity);
 
-        // Remove from all component stores
         for (auto it = mStores.begin(); it != mStores.end(); ++it)
         {
             it.value()->remove(entity);
         }
 
-        EntityHandle handle{EntityTraits::index(entity), EntityTraits::generation(entity)};
+        EntityHandle handle{EntityTraits::index(entity),
+                            EntityTraits::generation(entity)};
         mEntities.erase(handle);
-
         return true;
     }
 
@@ -158,7 +143,8 @@ public:
             return false;
         }
 
-        EntityHandle handle{EntityTraits::index(entity), EntityTraits::generation(entity)};
+        EntityHandle handle{EntityTraits::index(entity),
+                            EntityTraits::generation(entity)};
         return mEntities.get(handle) != nullptr;
     }
 
@@ -185,10 +171,7 @@ public:
         store->emplace(entity, std::forward<Args>(args)...);
         T& ref = *store->tryGet(entity);
 
-        // Update component mask
         updateMask(entity, typeId<T>(), true);
-
-        // Fire event
         mEvents.emitComponentAdded<T>(entity, ref);
 
         return ref;
@@ -208,10 +191,7 @@ public:
             return false;
         }
 
-        // Fire event before removal
         mEvents.emitComponentRemoved<T>(entity);
-
-        // Update mask
         updateMask(entity, typeId<T>(), false);
 
         return store->remove(entity);
@@ -278,7 +258,8 @@ public:
 
     [[nodiscard]] ComponentMask mask(Entity entity) const noexcept
     {
-        EntityHandle handle{EntityTraits::index(entity), EntityTraits::generation(entity)};
+        EntityHandle handle{EntityTraits::index(entity),
+                            EntityTraits::generation(entity)};
         const auto* meta = mEntities.get(handle);
         if (meta == nullptr)
         {
@@ -315,7 +296,8 @@ public:
         fat_p::SmallVector<Entity, 64> result;
         for (const auto& entry : mEntities.entries())
         {
-            result.push_back(EntityTraits::make(entry.handle.index, entry.handle.generation));
+            result.push_back(
+                EntityTraits::make(entry.handle.index, entry.handle.generation));
         }
         return result;
     }
@@ -378,20 +360,18 @@ private:
 
     void updateMask(Entity entity, TypeId tid, bool set)
     {
-        EntityHandle handle{EntityTraits::index(entity), EntityTraits::generation(entity)};
+        EntityHandle handle{EntityTraits::index(entity),
+                            EntityTraits::generation(entity)};
         auto* meta = mEntities.get(handle);
-        if (meta != nullptr)
+        if (meta != nullptr && tid < kMaxComponentTypes)
         {
-            if (tid < kMaxComponentTypes)
+            if (set)
             {
-                if (set)
-                {
-                    meta->mask.set(tid);
-                }
-                else
-                {
-                    meta->mask.clear(tid);
-                }
+                meta->mask.set(tid);
+            }
+            else
+            {
+                meta->mask.clear(tid);
             }
         }
     }

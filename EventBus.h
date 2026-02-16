@@ -2,32 +2,18 @@
 
 /**
  * @file EventBus.h
- * @brief Signal-based event system for the FAT-P ECS framework.
- *
- * @details
- * Provides typed event signals for entity and component lifecycle:
- * - onEntityCreated:      fired when a new entity is created
- * - onEntityDestroyed:    fired when an entity is destroyed
- * - onComponentAdded<T>:  fired when component T is attached to an entity
- * - onComponentRemoved<T>: fired when component T is removed from an entity
- *
- * Events use the fat_p::Signal system, which provides:
- * - Zero heap allocation for <= 4 listeners (SmallVector<Slot, 4>)
- * - RAII ScopedConnection for automatic lifetime management
- * - Reentrancy safety (safe to connect/disconnect during emission)
- * - Priority-based slot ordering
- *
- * Typed component events are stored in a FastHashMap keyed by TypeId,
- * using the same pattern as component stores.
- *
- * FAT-P components used:
- * - Signal: Observer pattern with SmallVector-backed slot storage
- * - FastHashMap: Type-erased storage for per-component-type signals
- * - ScopedConnection: RAII connection lifetime (from Signal.h)
- *
- * @note Thread Safety: Signals are single-threaded by default.
- *       For thread-safe signals, use ThreadSafeSignal aliases.
+ * @brief Signal-based event system for entity and component lifecycle.
  */
+
+// FAT-P components used:
+// - Signal: Observer pattern with SmallVector-backed slot storage
+//   - ScopedConnection: RAII connection lifetime management
+// - FastHashMap: Type-erased storage for per-component-type signals
+//
+// Entity signals (onEntityCreated, onEntityDestroyed) are direct members.
+// Component signals (onComponentAdded<T>, onComponentRemoved<T>) are stored
+// type-erased in a FastHashMap keyed by TypeId, lazily created on first
+// listener connection to avoid overhead for unobserved component types.
 
 #include <memory>
 
@@ -39,7 +25,7 @@
 namespace fatp_ecs
 {
 
-// Forward declaration
+// Forward declarations — typeId<T>() is defined in Registry.h
 using TypeId = std::size_t;
 
 template <typename T>
@@ -49,14 +35,7 @@ TypeId typeId() noexcept;
 // Type-Erased Signal Interface
 // =============================================================================
 
-/**
- * @brief Abstract base for type-erased component event signals.
- *
- * @details
- * Just like IComponentStore provides type erasure for storage,
- * IComponentSignalPair provides type erasure for the pair of
- * added/removed signals for a single component type.
- */
+/// @brief Abstract base for type-erased component event signals.
 class IComponentSignalPair
 {
 public:
@@ -69,17 +48,9 @@ public:
 };
 
 /**
- * @brief Concrete typed signal pair for component type T.
+ * @brief Concrete signal pair for component type T.
  *
  * @tparam T The component type.
- *
- * @details
- * Holds two signals:
- * - onAdded:   emitted with (Entity, T&) when component is attached
- * - onRemoved: emitted with (Entity) when component is detached
- *
- * The onAdded signal passes a mutable reference so listeners can
- * inspect or modify the component immediately after attachment.
  */
 template <typename T>
 class ComponentSignalPair : public IComponentSignalPair
@@ -93,41 +64,20 @@ public:
 // EventBus
 // =============================================================================
 
-/**
- * @brief Central event hub for ECS lifecycle events.
- *
- * @details
- * Owned by the Registry and provides both entity-level and
- * component-level event signals.
- *
- * Usage:
- * @code
- * Registry registry;
- *
- * // Entity events
- * auto conn1 = registry.events().onEntityCreated.connect(
- *     [](Entity e) { std::cout << "Created!\n"; });
- *
- * // Component events
- * auto conn2 = registry.events().onComponentAdded<Position>().connect(
- *     [](Entity e, Position& p) { std::cout << "Position added\n"; });
- *
- * Entity e = registry.create();  // fires onEntityCreated
- * registry.add<Position>(e, 10.0f, 20.0f);  // fires onComponentAdded<Position>
- * registry.destroy(e);  // fires onComponentRemoved + onEntityDestroyed
- * @endcode
- */
+// The EventBus provides entity-level signals as direct public members and
+// component-level signals via template accessors. Component signals are
+// lazily allocated: emitComponentAdded/Removed check for an existing signal
+// pair before emitting, so types nobody listens to incur no allocation.
+
+/// @brief Central event hub for ECS lifecycle events.
 class EventBus
 {
 public:
     EventBus() = default;
     ~EventBus() = default;
 
-    // Non-copyable
     EventBus(const EventBus&) = delete;
     EventBus& operator=(const EventBus&) = delete;
-
-    // Movable
     EventBus(EventBus&&) noexcept = default;
     EventBus& operator=(EventBus&&) noexcept = default;
 
@@ -138,7 +88,7 @@ public:
     /// @brief Fired when a new entity is created. Signature: void(Entity).
     fat_p::Signal<void(Entity)> onEntityCreated;
 
-    /// @brief Fired when an entity is about to be destroyed. Signature: void(Entity).
+    /// @brief Fired before an entity is destroyed. Signature: void(Entity).
     fat_p::Signal<void(Entity)> onEntityDestroyed;
 
     // =========================================================================
@@ -149,7 +99,7 @@ public:
      * @brief Returns the onComponentAdded signal for type T.
      *
      * @tparam T The component type.
-     * @return Reference to the signal. Lazily creates the signal pair if needed.
+     * @return Reference to the signal. Created lazily if needed.
      */
     template <typename T>
     fat_p::Signal<void(Entity, T&)>& onComponentAdded()
@@ -161,7 +111,7 @@ public:
      * @brief Returns the onComponentRemoved signal for type T.
      *
      * @tparam T The component type.
-     * @return Reference to the signal. Lazily creates the signal pair if needed.
+     * @return Reference to the signal. Created lazily if needed.
      */
     template <typename T>
     fat_p::Signal<void(Entity)>& onComponentRemoved()
@@ -173,12 +123,7 @@ public:
     // Internal: Emit Helpers (called by Registry)
     // =========================================================================
 
-    /**
-     * @brief Emit the component-added event for type T.
-     *
-     * @details Only emits if a signal pair exists for this type.
-     *          Avoids creating signal infrastructure for types nobody listens to.
-     */
+    /// @brief Emit component-added event if listeners exist for type T.
     template <typename T>
     void emitComponentAdded(Entity entity, T& component)
     {
@@ -189,9 +134,7 @@ public:
         }
     }
 
-    /**
-     * @brief Emit the component-removed event for type T.
-     */
+    /// @brief Emit component-removed event if listeners exist for type T.
     template <typename T>
     void emitComponentRemoved(Entity entity)
     {
@@ -203,9 +146,6 @@ public:
     }
 
 private:
-    /**
-     * @brief Ensures a ComponentSignalPair<T> exists and returns a pointer.
-     */
     template <typename T>
     ComponentSignalPair<T>* ensureSignalPair()
     {
@@ -223,9 +163,6 @@ private:
         return raw;
     }
 
-    /**
-     * @brief Returns the ComponentSignalPair<T> if it exists, nullptr otherwise.
-     */
     template <typename T>
     ComponentSignalPair<T>* getSignalPair()
     {
@@ -238,7 +175,6 @@ private:
         return static_cast<ComponentSignalPair<T>*>(val->get());
     }
 
-    /// @brief Type-erased signal pairs, keyed by TypeId.
     fat_p::FastHashMap<TypeId, std::unique_ptr<IComponentSignalPair>> mSignals;
 };
 

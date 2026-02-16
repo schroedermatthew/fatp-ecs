@@ -3,29 +3,23 @@
 /**
  * @file Scheduler.h
  * @brief ThreadPool-based parallel system execution for the ECS framework.
- *
- * @details
- * The Scheduler provides two levels of parallelism:
- *
- * 1. **System-Level Parallelism (Scheduler::run)**:
- *    Systems are registered with read/write component masks. The scheduler
- *    analyzes dependencies via BitSet intersection and runs non-conflicting
- *    systems in parallel on the ThreadPool.
- *
- * 2. **Data-Level Parallelism (par_each)**:
- *    A single system's iteration can be split across threads. The component
- *    dense array is partitioned into chunks, and each chunk is processed by
- *    a different ThreadPool worker.
- *
- * FAT-P components used:
- * - ThreadPool: Work-stealing thread pool for task execution
- * - BitSet: Component masks for dependency analysis (via ComponentMask)
- * - WorkQueue: (Available for fire-and-forget jobs if needed)
- *
- * @note Thread Safety: The Scheduler itself is not thread-safe.
- *       It's meant to be driven from a single "main loop" thread.
- *       The parallelism is internal to the Scheduler's execution.
  */
+
+// FAT-P components used:
+// - ThreadPool: Work-stealing thread pool with priority queues
+// - BitSet: Component masks for dependency analysis (via ComponentMask)
+//
+// Two levels of parallelism:
+//
+// 1. System-level (Scheduler::run): Systems declare read/write component
+//    masks. The scheduler uses BitSet intersection to identify non-conflicting
+//    systems and runs them concurrently on the ThreadPool. Greedy batching:
+//    collect all runnable non-conflicting systems, submit, wait, repeat.
+//
+// 2. Data-level (Scheduler::parallel_for): A single system's iteration is
+//    split across threads. The dense array is partitioned into chunks, each
+//    processed by a different worker. The calling thread processes the last
+//    chunk to avoid idle-waiting.
 
 #include <algorithm>
 #include <atomic>
@@ -43,8 +37,8 @@
 namespace fatp_ecs
 {
 
-// Forward declarations
 class Registry;
+
 template <typename... Ts>
 class View;
 
@@ -52,40 +46,25 @@ class View;
 // System Descriptor
 // =============================================================================
 
-/**
- * @brief Describes a system's execution requirements.
- *
- * @details
- * A system is a function that operates on entity components.
- * The descriptor carries the function plus metadata for dependency analysis:
- * - writeMask: components the system modifies (exclusive access needed)
- * - readMask: components the system reads (shared access OK)
- *
- * Two systems can run in parallel iff neither's writeMask overlaps with
- * the other's readMask or writeMask (basic readers-writer analysis).
- */
+// Two systems conflict if either's writeMask overlaps with the other's
+// readMask or writeMask (basic readers-writer analysis).
+
+/// @brief Describes a system's execution function and component access.
 struct SystemDescriptor
 {
-    std::string name;                          ///< Debug name for logging
-    std::function<void(Registry&)> execute;    ///< The system function
-    ComponentMask writeMask;                    ///< Components written (exclusive)
-    ComponentMask readMask;                     ///< Components read (shared)
+    std::string name;
+    std::function<void(Registry&)> execute;
+    ComponentMask writeMask;
+    ComponentMask readMask;
 
-    /**
-     * @brief Check if this system conflicts with another.
-     *
-     * Two systems conflict if:
-     * - A's writes overlap with B's reads or writes, OR
-     * - B's writes overlap with A's reads or writes
-     */
+    /// @brief Returns true if this system conflicts with another.
     [[nodiscard]] bool conflictsWith(const SystemDescriptor& other) const noexcept
     {
-        // My writes vs their reads or writes
-        if (writeMask.intersects(other.readMask) || writeMask.intersects(other.writeMask))
+        if (writeMask.intersects(other.readMask) ||
+            writeMask.intersects(other.writeMask))
         {
             return true;
         }
-        // Their writes vs my reads
         if (other.writeMask.intersects(readMask))
         {
             return true;
@@ -98,40 +77,8 @@ struct SystemDescriptor
 // Scheduler
 // =============================================================================
 
-/**
- * @brief Manages system registration and parallel execution.
- *
- * @details
- * The Scheduler provides a simple API for registering systems and
- * executing them with automatic parallelism based on component
- * dependency analysis.
- *
- * Usage:
- * @code
- * Registry registry;
- * Scheduler scheduler(4);  // 4 worker threads
- *
- * // Register systems with component access declarations
- * scheduler.addSystem("Physics", [](Registry& reg) {
- *     reg.view<Position, Velocity>().each([](Entity e, Position& p, Velocity& v) {
- *         p.x += v.dx;
- *         p.y += v.dy;
- *     });
- * }, makeComponentMask<Position, Velocity>(),   // writes
- *    makeComponentMask<>());                     // reads
- *
- * scheduler.addSystem("Render", [](Registry& reg) {
- *     reg.view<Position, Sprite>().each([](Entity e, Position& p, Sprite& s) {
- *         // draw...
- *     });
- * }, makeComponentMask<>(),                      // writes
- *    makeComponentMask<Position, Sprite>());      // reads
- *
- * // Physics writes Position; Render reads Position → sequential
- * // But two read-only systems could run in parallel
- * scheduler.run(registry);
- * @endcode
- */
+/// @brief Manages system registration and parallel execution.
+/// @note Thread-safety: NOT thread-safe. Drive from a single main-loop thread.
 class Scheduler
 {
 public:
@@ -148,10 +95,10 @@ public:
     /**
      * @brief Register a system for scheduled execution.
      *
-     * @param name Debug name for the system.
-     * @param execute The system function.
+     * @param name      Debug name for the system.
+     * @param execute   The system function.
      * @param writeMask Components this system writes.
-     * @param readMask Components this system reads.
+     * @param readMask  Components this system reads.
      */
     void addSystem(std::string name,
                    std::function<void(Registry&)> execute,
@@ -166,23 +113,7 @@ public:
         });
     }
 
-    /**
-     * @brief Execute all registered systems with dependency-based parallelism.
-     *
-     * @param registry The registry to pass to each system.
-     *
-     * @details
-     * Uses a simple greedy scheduling algorithm:
-     * 1. Start with all systems unscheduled.
-     * 2. Find systems that don't conflict with any currently-running system.
-     * 3. Submit those to the ThreadPool.
-     * 4. Wait for the batch to complete.
-     * 5. Repeat until all systems have run.
-     *
-     * This guarantees correctness (no conflicting parallel access) while
-     * extracting available parallelism. It's not globally optimal but is
-     * simple and predictable.
-     */
+    /// @brief Execute all registered systems with dependency-based parallelism.
     void run(Registry& registry)
     {
         if (mSystems.empty())
@@ -209,16 +140,12 @@ public:
 
                 const auto& sys = mSystems[i];
 
-                // Check if this system conflicts with any already-batched system
                 bool canRun = true;
-
-                // My writes vs batch reads or writes
                 if (sys.writeMask.intersects(batchReadMask) ||
                     sys.writeMask.intersects(batchWriteMask))
                 {
                     canRun = false;
                 }
-                // My reads vs batch writes
                 if (canRun && sys.readMask.intersects(batchWriteMask))
                 {
                     canRun = false;
@@ -235,30 +162,27 @@ public:
             // Execute the batch
             if (batch.size() == 1)
             {
-                // Single system — run inline, no thread pool overhead
                 mSystems[batch[0]].execute(registry);
             }
             else
             {
-                // Multiple systems — submit to thread pool
                 std::vector<std::future<void>> futures;
                 futures.reserve(batch.size());
 
                 for (std::size_t idx : batch)
                 {
-                    futures.push_back(mPool.submit([&registry, &sys = mSystems[idx]]() {
-                        sys.execute(registry);
-                    }));
+                    futures.push_back(
+                        mPool.submit([&registry, &sys = mSystems[idx]]() {
+                            sys.execute(registry);
+                        }));
                 }
 
-                // Wait for all to complete
                 for (auto& f : futures)
                 {
                     f.get();
                 }
             }
 
-            // Mark completed
             for (std::size_t idx : batch)
             {
                 completed[idx] = true;
@@ -271,30 +195,13 @@ public:
      * @brief Execute a function in parallel across chunks of data.
      *
      * @tparam Func Callable with signature void(std::size_t begin, std::size_t end).
-     * @param count Total number of items to process.
-     * @param func Function called for each chunk [begin, end).
+     * @param count        Total number of items to process.
+     * @param func         Function called for each chunk [begin, end).
      * @param minChunkSize Minimum items per chunk (default: 64).
-     *
-     * @details
-     * Splits [0, count) into chunks of at least minChunkSize items.
-     * Each chunk is submitted to the ThreadPool. The calling thread
-     * also processes one chunk to avoid idle-waiting.
-     *
-     * Usage:
-     * @code
-     * auto& positions = store->data();
-     * auto& velocities = velStore->data();
-     *
-     * scheduler.parallel_for(positions.size(),
-     *     [&](std::size_t begin, std::size_t end) {
-     *         for (std::size_t i = begin; i < end; ++i) {
-     *             positions[i].x += velocities[i].dx;
-     *         }
-     *     });
-     * @endcode
      */
     template <typename Func>
-    void parallel_for(std::size_t count, Func&& func, std::size_t minChunkSize = 64)
+    void parallel_for(std::size_t count, Func&& func,
+                      std::size_t minChunkSize = 64)
     {
         if (count == 0)
         {
@@ -302,12 +209,12 @@ public:
         }
 
         const std::size_t numThreads = mPool.thread_count();
-        const std::size_t chunkSize = std::max(minChunkSize, (count + numThreads - 1) / numThreads);
+        const std::size_t chunkSize =
+            std::max(minChunkSize, (count + numThreads - 1) / numThreads);
         const std::size_t numChunks = (count + chunkSize - 1) / chunkSize;
 
         if (numChunks <= 1)
         {
-            // Small enough to run single-threaded
             func(0, count);
             return;
         }
@@ -333,44 +240,31 @@ public:
             func(begin, end);
         }
 
-        // Wait for worker chunks
         for (auto& f : futures)
         {
             f.get();
         }
     }
 
-    /**
-     * @brief Returns the number of registered systems.
-     */
+    /// @brief Returns the number of registered systems.
     [[nodiscard]] std::size_t systemCount() const noexcept
     {
         return mSystems.size();
     }
 
-    /**
-     * @brief Returns the number of worker threads in the pool.
-     */
+    /// @brief Returns the number of worker threads in the pool.
     [[nodiscard]] std::size_t threadCount() const noexcept
     {
         return mPool.thread_count();
     }
 
-    /**
-     * @brief Clears all registered systems.
-     */
+    /// @brief Clears all registered systems.
     void clearSystems() noexcept
     {
         mSystems.clear();
     }
 
-    /**
-     * @brief Direct access to the underlying ThreadPool.
-     *
-     * @details
-     * Use this for custom parallelism patterns that don't fit
-     * the system model (e.g., parallel asset loading, AI planning).
-     */
+    /// @brief Direct access to the underlying ThreadPool.
     [[nodiscard]] fat_p::ThreadPool& pool() noexcept
     {
         return mPool;

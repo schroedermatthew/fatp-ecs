@@ -3,22 +3,20 @@
 /**
  * @file ComponentStore.h
  * @brief Type-erased component storage backed by SparseSetWithData.
- *
- * @details
- * Each concrete ComponentStore<T> wraps a SparseSetWithData<uint32_t, T>.
- *
- * Phase 2 addition: Each ComponentStore maintains a parallel vector of
- * full Entity values (including generation) alongside the SparseSet's
- * dense array. This allows Views to reconstruct complete Entity handles
- * during iteration, which is critical for generational safety.
- *
- * The parallel entity vector is kept in sync via SparseSetWithData::indexOf(),
- * which enables mirroring the swap-with-back erasure pattern.
- *
- * FAT-P components used:
- * - SparseSetWithData: Per-component-type storage
- *   - indexOf(): Keeps the parallel entity vector in sync on erase
  */
+
+// FAT-P components used:
+// - SparseSetWithData: Per-component-type storage with O(1) add/remove/get
+//   - indexOf(): Keeps the parallel entity vector in sync on erase
+//
+// Each ComponentStore<T> maintains a parallel std::vector<Entity> alongside
+// the SparseSet's dense array. The SparseSet stores uint32_t indices (losing
+// the Entity generation); the parallel vector stores full 64-bit entities.
+// Views read from this vector to yield correct generational Entity handles.
+//
+// The parallel vector mirrors the SparseSet's swap-with-back erasure via
+// indexOf(), which returns the dense index of a given sparse key before
+// the erase modifies it.
 
 #include <cstddef>
 #include <cstdint>
@@ -35,6 +33,7 @@ namespace fatp_ecs
 // IComponentStore - Type-Erased Interface
 // =============================================================================
 
+/// @brief Abstract interface for type-erased component storage.
 class IComponentStore
 {
 public:
@@ -57,6 +56,13 @@ public:
 // ComponentStore<T> - Concrete Typed Storage
 // =============================================================================
 
+/**
+ * @brief Typed component storage wrapping SparseSetWithData.
+ *
+ * @tparam T The component data type.
+ *
+ * @note Thread-safety: NOT thread-safe. The Registry serializes access.
+ */
 template <typename T>
 class ComponentStore : public IComponentStore
 {
@@ -88,7 +94,6 @@ public:
         std::size_t denseIdx = mStorage.indexOf(idx);
         std::size_t lastIdx = mStorage.size() - 1;
 
-        // Erase from SparseSet (does swap-with-back internally)
         mStorage.erase(idx);
 
         // Mirror swap-with-back in entity vector
@@ -144,7 +149,8 @@ public:
     template <typename... Args>
     bool emplace(Entity entity, Args&&... args)
     {
-        bool inserted = mStorage.emplace(EntityTraits::toIndex(entity), std::forward<Args>(args)...);
+        bool inserted = mStorage.emplace(EntityTraits::toIndex(entity),
+                                         std::forward<Args>(args)...);
         if (inserted)
         {
             mEntities.push_back(entity);
@@ -196,12 +202,7 @@ public:
         return mStorage.dataAt(denseIndex);
     }
 
-    /**
-     * @brief Returns the parallel entity vector (full Entity with generation).
-     *
-     * entities()[i] is the full Entity handle for the component at data()[i].
-     * Views use this to yield correct Entity handles during iteration.
-     */
+    /// @brief Returns the parallel entity vector (full Entity with generation).
     [[nodiscard]] const std::vector<Entity>& entities() const noexcept
     {
         return mEntities;
@@ -219,7 +220,7 @@ public:
 
 private:
     StorageType mStorage;
-    std::vector<Entity> mEntities;  ///< Parallel to dense: full Entity with generation
+    std::vector<Entity> mEntities;  // Parallel to dense: full Entity with generation
 };
 
 } // namespace fatp_ecs
