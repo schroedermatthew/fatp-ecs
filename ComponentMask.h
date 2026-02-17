@@ -22,7 +22,7 @@ namespace fatp_ecs
 {
 
 /// @brief Maximum number of distinct component types supported.
-static constexpr std::size_t kMaxComponentTypes = 256;
+inline constexpr std::size_t kMaxComponentTypes = 256;
 
 /// @brief A bitmask representing a set of component types.
 using ComponentMask = fat_p::BitSet<kMaxComponentTypes>;

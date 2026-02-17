@@ -28,43 +28,11 @@
 #include "ComponentStore.h"
 #include "Entity.h"
 #include "EventBus.h"
+#include "TypeId.h"
 #include "View.h"
 
 namespace fatp_ecs
 {
-
-// =============================================================================
-// TypeId Helper
-// =============================================================================
-
-using TypeId = std::size_t;
-
-namespace detail
-{
-
-inline TypeId nextTypeId() noexcept
-{
-    static TypeId counter = 0;
-    return counter++;
-}
-
-} // namespace detail
-
-template <typename T>
-TypeId typeId() noexcept
-{
-    static const TypeId id = detail::nextTypeId();
-    return id;
-}
-
-/// @brief Builds a ComponentMask from a list of component types.
-template <typename... Ts>
-ComponentMask makeComponentMask()
-{
-    ComponentMask mask;
-    (mask.set(typeId<Ts>()), ...);
-    return mask;
-}
 
 // =============================================================================
 // EntityMetadata

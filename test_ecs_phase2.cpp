@@ -65,47 +65,36 @@ struct Tag
 };
 
 // =============================================================================
-// Test Infrastructure
+// Test Harness
 // =============================================================================
 
-static int sPassCount = 0;
-static int sFailCount = 0;
+static int gTestsPassed = 0;
+static int gTestsFailed = 0;
 
-#define TEST(name)                                \
-    static void test_##name();                    \
-    struct Register_##name                        \
-    {                                             \
-        Register_##name()                         \
-        {                                         \
-            test_##name();                        \
-        }                                         \
-    };                                            \
-    static Register_##name sReg_##name;           \
-    static void test_##name()
-
-#define CHECK(expr)                                                     \
-    do                                                                  \
-    {                                                                   \
-        if (!(expr))                                                    \
-        {                                                               \
-            std::printf("  FAIL: %s (line %d)\n", #expr, __LINE__);    \
-            ++sFailCount;                                               \
-            return;                                                     \
-        }                                                               \
+#define TEST_ASSERT(condition, msg)                                      \
+    do                                                                   \
+    {                                                                    \
+        if (!(condition))                                                \
+        {                                                                \
+            std::printf("  FAIL: %s (line %d)\n", msg, __LINE__);       \
+            ++gTestsFailed;                                              \
+            return;                                                      \
+        }                                                                \
     } while (false)
 
-#define PASS(name)                                               \
-    do                                                           \
-    {                                                            \
-        ++sPassCount;                                            \
-        std::printf("  PASS: %s\n", name);                      \
+#define RUN_TEST(func)                                                   \
+    do                                                                   \
+    {                                                                    \
+        std::printf("  Running: %s\n", #func);                          \
+        func();                                                          \
+        ++gTestsPassed;                                                  \
     } while (false)
 
 // =============================================================================
 // EVENT TESTS
 // =============================================================================
 
-TEST(entity_created_event)
+void test_entity_created_event()
 {
     Registry reg;
     int count = 0;
@@ -115,11 +104,10 @@ TEST(entity_created_event)
     (void)reg.create();
     (void)reg.create();
 
-    CHECK(count == 3);
-    PASS("entity_created_event");
+    TEST_ASSERT(count == 3, "count == 3");
 }
 
-TEST(entity_destroyed_event)
+void test_entity_destroyed_event()
 {
     Registry reg;
     std::vector<Entity> destroyed;
@@ -132,17 +120,16 @@ TEST(entity_destroyed_event)
 
     reg.destroy(e2);
 
-    CHECK(destroyed.size() == 1);
-    CHECK(destroyed[0] == e2);
+    TEST_ASSERT(destroyed.size() == 1, "destroyed.size() == 1");
+    TEST_ASSERT(destroyed[0] == e2, "destroyed[0] == e2");
 
     reg.destroy(e1);
     reg.destroy(e3);
 
-    CHECK(destroyed.size() == 3);
-    PASS("entity_destroyed_event");
+    TEST_ASSERT(destroyed.size() == 3, "destroyed.size() == 3");
 }
 
-TEST(component_added_event)
+void test_component_added_event()
 {
     Registry reg;
     int addedCount = 0;
@@ -156,16 +143,14 @@ TEST(component_added_event)
     Entity e = reg.create();
     reg.add<Position>(e, 10.0f, 20.0f);
 
-    CHECK(addedCount == 1);
+    TEST_ASSERT(addedCount == 1, "addedCount == 1");
 
     // Adding same component again should NOT fire (idempotent add)
     reg.add<Position>(e, 99.0f, 99.0f);
-    CHECK(addedCount == 1);
-
-    PASS("component_added_event");
+    TEST_ASSERT(addedCount == 1, "addedCount == 1");
 }
 
-TEST(component_removed_event)
+void test_component_removed_event()
 {
     Registry reg;
     int removedCount = 0;
@@ -176,16 +161,14 @@ TEST(component_removed_event)
     reg.add<Position>(e, 10.0f, 20.0f);
     reg.remove<Position>(e);
 
-    CHECK(removedCount == 1);
+    TEST_ASSERT(removedCount == 1, "removedCount == 1");
 
     // Remove again — should not fire (already removed)
     reg.remove<Position>(e);
-    CHECK(removedCount == 1);
-
-    PASS("component_removed_event");
+    TEST_ASSERT(removedCount == 1, "removedCount == 1");
 }
 
-TEST(component_event_not_fired_for_wrong_type)
+void test_component_event_not_fired_for_wrong_type()
 {
     Registry reg;
     int posAdded = 0;
@@ -199,17 +182,15 @@ TEST(component_event_not_fired_for_wrong_type)
     Entity e = reg.create();
     reg.add<Position>(e, 1.0f, 2.0f);
 
-    CHECK(posAdded == 1);
-    CHECK(velAdded == 0);
+    TEST_ASSERT(posAdded == 1, "posAdded == 1");
+    TEST_ASSERT(velAdded == 0, "velAdded == 0");
 
     reg.add<Velocity>(e, 3.0f, 4.0f);
-    CHECK(posAdded == 1);
-    CHECK(velAdded == 1);
-
-    PASS("component_event_not_fired_for_wrong_type");
+    TEST_ASSERT(posAdded == 1, "posAdded == 1");
+    TEST_ASSERT(velAdded == 1, "velAdded == 1");
 }
 
-TEST(scoped_connection_disconnect)
+void test_scoped_connection_disconnect()
 {
     Registry reg;
     int count = 0;
@@ -218,17 +199,15 @@ TEST(scoped_connection_disconnect)
         auto conn = reg.events().onEntityCreated.connect(
             [&](Entity) { ++count; });
         (void)reg.create();
-        CHECK(count == 1);
+        TEST_ASSERT(count == 1, "count == 1");
     }
     // conn is out of scope — disconnected
 
     (void)reg.create();
-    CHECK(count == 1); // Should NOT have fired
-
-    PASS("scoped_connection_disconnect");
+    TEST_ASSERT(count == 1, "count == 1"); // Should NOT have fired
 }
 
-TEST(destroy_fires_events_before_removal)
+void test_destroy_fires_events_before_removal()
 {
     Registry reg;
     bool hadPosition = false;
@@ -244,38 +223,35 @@ TEST(destroy_fires_events_before_removal)
     reg.add<Position>(e, 1.0f, 2.0f);
     reg.destroy(e);
 
-    CHECK(hadPosition == true);
-    PASS("destroy_fires_events_before_removal");
+    TEST_ASSERT(hadPosition == true, "hadPosition == true");
 }
 
 // =============================================================================
 // COMPONENT MASK TESTS
 // =============================================================================
 
-TEST(component_mask_basic)
+void test_component_mask_basic()
 {
     Registry reg;
     Entity e = reg.create();
 
-    CHECK(reg.mask(e).count() == 0);
+    TEST_ASSERT(reg.mask(e).count() == 0, "reg.mask(e).count() == 0");
 
     reg.add<Position>(e, 1.0f, 2.0f);
-    CHECK(reg.mask(e).count() == 1);
-    CHECK(reg.mask(e).test(typeId<Position>()));
+    TEST_ASSERT(reg.mask(e).count() == 1, "reg.mask(e).count() == 1");
+    TEST_ASSERT(reg.mask(e).test(typeId<Position>()), "reg.mask(e).test(typeId<Position>())");
 
     reg.add<Velocity>(e, 3.0f, 4.0f);
-    CHECK(reg.mask(e).count() == 2);
-    CHECK(reg.mask(e).test(typeId<Velocity>()));
+    TEST_ASSERT(reg.mask(e).count() == 2, "reg.mask(e).count() == 2");
+    TEST_ASSERT(reg.mask(e).test(typeId<Velocity>()), "reg.mask(e).test(typeId<Velocity>())");
 
     reg.remove<Position>(e);
-    CHECK(reg.mask(e).count() == 1);
-    CHECK(!reg.mask(e).test(typeId<Position>()));
-    CHECK(reg.mask(e).test(typeId<Velocity>()));
-
-    PASS("component_mask_basic");
+    TEST_ASSERT(reg.mask(e).count() == 1, "reg.mask(e).count() == 1");
+    TEST_ASSERT(!reg.mask(e).test(typeId<Position>()), "!reg.mask(e).test(typeId<Position>())");
+    TEST_ASSERT(reg.mask(e).test(typeId<Velocity>()), "reg.mask(e).test(typeId<Velocity>())");
 }
 
-TEST(make_component_mask)
+void test_make_component_mask()
 {
     // Ensure typeIds are initialized
     Registry reg;
@@ -284,14 +260,12 @@ TEST(make_component_mask)
     reg.add<Velocity>(e);
 
     auto mask = makeComponentMask<Position, Velocity>();
-    CHECK(mask.test(typeId<Position>()));
-    CHECK(mask.test(typeId<Velocity>()));
-    CHECK(!mask.test(typeId<Health>()));
-
-    PASS("make_component_mask");
+    TEST_ASSERT(mask.test(typeId<Position>()), "mask.test(typeId<Position>())");
+    TEST_ASSERT(mask.test(typeId<Velocity>()), "mask.test(typeId<Velocity>())");
+    TEST_ASSERT(!mask.test(typeId<Health>()), "!mask.test(typeId<Health>())");
 }
 
-TEST(component_mask_dead_entity)
+void test_component_mask_dead_entity()
 {
     Registry reg;
     Entity e = reg.create();
@@ -299,12 +273,10 @@ TEST(component_mask_dead_entity)
     reg.destroy(e);
 
     auto mask = reg.mask(e);
-    CHECK(mask.count() == 0); // Dead entity returns empty mask
-
-    PASS("component_mask_dead_entity");
+    TEST_ASSERT(mask.count() == 0, "mask.count() == 0"); // Dead entity returns empty mask
 }
 
-TEST(component_mask_archetype_matching)
+void test_component_mask_archetype_matching()
 {
     Registry reg;
     Entity e1 = reg.create();
@@ -319,19 +291,17 @@ TEST(component_mask_archetype_matching)
     auto posVelMask = makeComponentMask<Position, Velocity>();
 
     // e1 has Position+Velocity — posVelMask is subset of e1's mask
-    CHECK(posVelMask.isSubsetOf(reg.mask(e1)));
+    TEST_ASSERT(posVelMask.isSubsetOf(reg.mask(e1)), "posVelMask.isSubsetOf(reg.mask(e1))");
 
     // e2 does NOT have Velocity — posVelMask is NOT subset
-    CHECK(!posVelMask.isSubsetOf(reg.mask(e2)));
-
-    PASS("component_mask_archetype_matching");
+    TEST_ASSERT(!posVelMask.isSubsetOf(reg.mask(e2)), "!posVelMask.isSubsetOf(reg.mask(e2))");
 }
 
 // =============================================================================
 // COMMAND BUFFER TESTS
 // =============================================================================
 
-TEST(command_buffer_deferred_create)
+void test_command_buffer_deferred_create()
 {
     Registry reg;
     CommandBuffer cmd;
@@ -343,15 +313,14 @@ TEST(command_buffer_deferred_create)
     });
 
     // Not flushed yet
-    CHECK(reg.entityCount() == beforeCount);
+    TEST_ASSERT(reg.entityCount() == beforeCount, "reg.entityCount() == beforeCount");
 
     cmd.flush(reg);
 
-    CHECK(reg.entityCount() == beforeCount + 1);
-    PASS("command_buffer_deferred_create");
+    TEST_ASSERT(reg.entityCount() == beforeCount + 1, "reg.entityCount() == beforeCount + 1");
 }
 
-TEST(command_buffer_deferred_destroy)
+void test_command_buffer_deferred_destroy()
 {
     Registry reg;
     Entity e = reg.create();
@@ -360,15 +329,14 @@ TEST(command_buffer_deferred_destroy)
     CommandBuffer cmd;
     cmd.destroy(e);
 
-    CHECK(reg.isAlive(e)); // Not yet destroyed
+    TEST_ASSERT(reg.isAlive(e), "reg.isAlive(e)"); // Not yet destroyed
 
     cmd.flush(reg);
 
-    CHECK(!reg.isAlive(e));
-    PASS("command_buffer_deferred_destroy");
+    TEST_ASSERT(!reg.isAlive(e), "!reg.isAlive(e)");
 }
 
-TEST(command_buffer_deferred_add_remove)
+void test_command_buffer_deferred_add_remove()
 {
     Registry reg;
     Entity e = reg.create();
@@ -378,41 +346,37 @@ TEST(command_buffer_deferred_add_remove)
     cmd.add<Velocity>(e, 3.0f, 4.0f);
     cmd.remove<Position>(e);
 
-    CHECK(reg.has<Position>(e));
-    CHECK(!reg.has<Velocity>(e));
+    TEST_ASSERT(reg.has<Position>(e), "reg.has<Position>(e)");
+    TEST_ASSERT(!reg.has<Velocity>(e), "!reg.has<Velocity>(e)");
 
     cmd.flush(reg);
 
-    CHECK(!reg.has<Position>(e));
-    CHECK(reg.has<Velocity>(e));
+    TEST_ASSERT(!reg.has<Position>(e), "!reg.has<Position>(e)");
+    TEST_ASSERT(reg.has<Velocity>(e), "reg.has<Velocity>(e)");
 
     auto* vel = reg.tryGet<Velocity>(e);
-    CHECK(vel != nullptr);
-    CHECK(vel->dx == 3.0f);
-    CHECK(vel->dy == 4.0f);
-
-    PASS("command_buffer_deferred_add_remove");
+    TEST_ASSERT(vel != nullptr, "vel != nullptr");
+    TEST_ASSERT(vel->dx == 3.0f, "vel->dx == 3.0f");
+    TEST_ASSERT(vel->dy == 4.0f, "vel->dy == 4.0f");
 }
 
-TEST(command_buffer_clear)
+void test_command_buffer_clear()
 {
     Registry reg;
     Entity e = reg.create();
 
     CommandBuffer cmd;
     cmd.destroy(e);
-    CHECK(cmd.size() == 1);
+    TEST_ASSERT(cmd.size() == 1, "cmd.size() == 1");
 
     cmd.clear();
-    CHECK(cmd.empty());
+    TEST_ASSERT(cmd.empty(), "cmd.empty()");
 
     cmd.flush(reg);
-    CHECK(reg.isAlive(e)); // Should NOT have been destroyed
-
-    PASS("command_buffer_clear");
+    TEST_ASSERT(reg.isAlive(e), "reg.isAlive(e)"); // Should NOT have been destroyed
 }
 
-TEST(command_buffer_ordering)
+void test_command_buffer_ordering()
 {
     Registry reg;
 
@@ -432,15 +396,13 @@ TEST(command_buffer_ordering)
 
     cmd.flush(reg);
 
-    CHECK(order.size() == 2);
-    CHECK(order[0] == 1);
-    CHECK(order[1] == 2);
-    CHECK(reg.entityCount() == 2);
-
-    PASS("command_buffer_ordering");
+    TEST_ASSERT(order.size() == 2, "order.size() == 2");
+    TEST_ASSERT(order[0] == 1, "order[0] == 1");
+    TEST_ASSERT(order[1] == 2, "order[1] == 2");
+    TEST_ASSERT(reg.entityCount() == 2, "reg.entityCount() == 2");
 }
 
-TEST(command_buffer_with_iteration)
+void test_command_buffer_with_iteration()
 {
     Registry reg;
 
@@ -460,21 +422,19 @@ TEST(command_buffer_with_iteration)
         }
     });
 
-    CHECK(reg.entityCount() == 10); // Not yet destroyed
+    TEST_ASSERT(reg.entityCount() == 10, "reg.entityCount() == 10"); // Not yet destroyed
 
     cmd.flush(reg);
 
     // Entities with health 0, 10, 20, 30 should be destroyed (4 entities)
-    CHECK(reg.entityCount() == 6);
-
-    PASS("command_buffer_with_iteration");
+    TEST_ASSERT(reg.entityCount() == 6, "reg.entityCount() == 6");
 }
 
 // =============================================================================
 // PARALLEL COMMAND BUFFER TESTS
 // =============================================================================
 
-TEST(parallel_command_buffer_thread_safe)
+void test_parallel_command_buffer_thread_safe()
 {
     Registry reg;
     for (int i = 0; i < 100; ++i)
@@ -509,16 +469,14 @@ TEST(parallel_command_buffer_thread_safe)
     // All 100 entities should have Tag
     std::size_t tagCount = 0;
     reg.view<Tag>().each([&](Entity, Tag&) { ++tagCount; });
-    CHECK(tagCount == 100);
-
-    PASS("parallel_command_buffer_thread_safe");
+    TEST_ASSERT(tagCount == 100, "tagCount == 100");
 }
 
 // =============================================================================
 // SCHEDULER TESTS
 // =============================================================================
 
-TEST(scheduler_basic_execution)
+void test_scheduler_basic_execution()
 {
     Registry reg;
     Entity e = reg.create();
@@ -541,13 +499,11 @@ TEST(scheduler_basic_execution)
     scheduler.run(reg);
 
     auto& pos = reg.get<Position>(e);
-    CHECK(pos.x == 1.0f);
-    CHECK(pos.y == 2.0f);
-
-    PASS("scheduler_basic_execution");
+    TEST_ASSERT(pos.x == 1.0f, "pos.x == 1.0f");
+    TEST_ASSERT(pos.y == 2.0f, "pos.y == 2.0f");
 }
 
-TEST(scheduler_non_conflicting_parallel)
+void test_scheduler_non_conflicting_parallel()
 {
     Registry reg;
 
@@ -587,13 +543,11 @@ TEST(scheduler_non_conflicting_parallel)
 
     scheduler.run(reg);
 
-    CHECK(physicsRan.load() == 1);
-    CHECK(healthRan.load() == 1);
-
-    PASS("scheduler_non_conflicting_parallel");
+    TEST_ASSERT(physicsRan.load() == 1, "physicsRan.load() == 1");
+    TEST_ASSERT(healthRan.load() == 1, "healthRan.load() == 1");
 }
 
-TEST(scheduler_conflicting_sequential)
+void test_scheduler_conflicting_sequential()
 {
     Registry reg;
     for (int i = 0; i < 100; ++i)
@@ -632,7 +586,7 @@ TEST(scheduler_conflicting_sequential)
 
     scheduler.run(reg);
 
-    CHECK(executionOrder.size() == 2);
+    TEST_ASSERT(executionOrder.size() == 2, "executionOrder.size() == 2");
     // Both ran (order guaranteed sequential but order doesn't matter)
 
     // Verify both effects applied
@@ -640,39 +594,33 @@ TEST(scheduler_conflicting_sequential)
         assert(pos.x == 1.0f);
         assert(pos.y == 1.0f);
     });
-
-    PASS("scheduler_conflicting_sequential");
 }
 
-TEST(scheduler_system_count)
+void test_scheduler_system_count()
 {
     Scheduler scheduler(1);
-    CHECK(scheduler.systemCount() == 0);
+    TEST_ASSERT(scheduler.systemCount() == 0, "scheduler.systemCount() == 0");
 
     scheduler.addSystem("A", [](Registry&) {});
     scheduler.addSystem("B", [](Registry&) {});
-    CHECK(scheduler.systemCount() == 2);
+    TEST_ASSERT(scheduler.systemCount() == 2, "scheduler.systemCount() == 2");
 
     scheduler.clearSystems();
-    CHECK(scheduler.systemCount() == 0);
-
-    PASS("scheduler_system_count");
+    TEST_ASSERT(scheduler.systemCount() == 0, "scheduler.systemCount() == 0");
 }
 
-TEST(scheduler_empty_run)
+void test_scheduler_empty_run()
 {
     Registry reg;
     Scheduler scheduler(1);
     scheduler.run(reg); // Should not crash
-
-    PASS("scheduler_empty_run");
 }
 
 // =============================================================================
 // PARALLEL_FOR TESTS
 // =============================================================================
 
-TEST(parallel_for_basic)
+void test_parallel_for_basic()
 {
     Scheduler scheduler(4);
     std::vector<int> data(10000, 0);
@@ -688,13 +636,11 @@ TEST(parallel_for_basic)
     // Verify all elements written correctly
     for (std::size_t i = 0; i < data.size(); ++i)
     {
-        CHECK(data[i] == static_cast<int>(i));
+        TEST_ASSERT(data[i] == static_cast<int>(i), "data[i] == static_cast<int>(i)");
     }
-
-    PASS("parallel_for_basic");
 }
 
-TEST(parallel_for_small_array)
+void test_parallel_for_small_array()
 {
     Scheduler scheduler(4);
     std::vector<int> data(10, 0);
@@ -710,23 +656,19 @@ TEST(parallel_for_small_array)
 
     for (auto& v : data)
     {
-        CHECK(v == 42);
+        TEST_ASSERT(v == 42, "v == 42");
     }
-
-    PASS("parallel_for_small_array");
 }
 
-TEST(parallel_for_empty)
+void test_parallel_for_empty()
 {
     Scheduler scheduler(4);
     scheduler.parallel_for(0, [](std::size_t, std::size_t) {
         assert(false && "Should not be called");
     });
-
-    PASS("parallel_for_empty");
 }
 
-TEST(parallel_for_accumulation)
+void test_parallel_for_accumulation()
 {
     Scheduler scheduler(4);
 
@@ -747,16 +689,14 @@ TEST(parallel_for_accumulation)
         });
 
     long long expected = static_cast<long long>(N) * (N + 1) / 2;
-    CHECK(sum.load() == expected);
-
-    PASS("parallel_for_accumulation");
+    TEST_ASSERT(sum.load() == expected, "sum.load() == expected");
 }
 
 // =============================================================================
 // INTEGRATION TESTS
 // =============================================================================
 
-TEST(events_and_command_buffer_integration)
+void test_events_and_command_buffer_integration()
 {
     Registry reg;
     CommandBuffer cmd;
@@ -775,13 +715,11 @@ TEST(events_and_command_buffer_integration)
     cmd.flush(reg);
 
     // Events should have fired during flush
-    CHECK(createdEntities.size() == 2);
-    CHECK(reg.entityCount() == 2);
-
-    PASS("events_and_command_buffer_integration");
+    TEST_ASSERT(createdEntities.size() == 2, "createdEntities.size() == 2");
+    TEST_ASSERT(reg.entityCount() == 2, "reg.entityCount() == 2");
 }
 
-TEST(scheduler_with_command_buffer)
+void test_scheduler_with_command_buffer()
 {
     Registry reg;
 
@@ -812,12 +750,10 @@ TEST(scheduler_with_command_buffer)
     cmd.flush(reg);
 
     // Entities with health 0..9 should be destroyed (10 entities)
-    CHECK(reg.entityCount() == 40);
-
-    PASS("scheduler_with_command_buffer");
+    TEST_ASSERT(reg.entityCount() == 40, "reg.entityCount() == 40");
 }
 
-TEST(full_game_loop_simulation)
+void test_full_game_loop_simulation()
 {
     Registry reg;
     Scheduler scheduler(2);
@@ -873,8 +809,8 @@ TEST(full_game_loop_simulation)
     // After 3 frames:
     // - Physics: all surviving entities moved 3 frames worth
     // - Some entities destroyed by health check
-    CHECK(destroyedCount > 0);
-    CHECK(reg.entityCount() < 1000);
+    TEST_ASSERT(destroyedCount > 0, "destroyedCount > 0");
+    TEST_ASSERT(reg.entityCount() < 1000, "reg.entityCount() < 1000");
 
     // Verify physics was applied for survivors (they had 3 full frames of movement)
     reg.view<Position>().each([](Entity, Position& pos) {
@@ -882,11 +818,9 @@ TEST(full_game_loop_simulation)
         // Survivors were alive for all 3 frames
         assert(pos.x >= 1.0f); // At least one frame
     });
-
-    PASS("full_game_loop_simulation");
 }
 
-TEST(event_during_iteration_safety)
+void test_event_during_iteration_safety()
 {
     Registry reg;
     int addedDuringIteration = 0;
@@ -914,12 +848,10 @@ TEST(event_during_iteration_safety)
 
     cmd.flush(reg);
 
-    CHECK(addedDuringIteration == 4); // Entities with x=6,7,8,9
-
-    PASS("event_during_iteration_safety");
+    TEST_ASSERT(addedDuringIteration == 4, "addedDuringIteration == 4"); // Entities with x=6,7,8,9
 }
 
-TEST(scale_10k_entities_with_events)
+void test_scale_10k_entities_with_events()
 {
     Registry reg;
     std::atomic<int> created{0};
@@ -939,7 +871,7 @@ TEST(scale_10k_entities_with_events)
         reg.add<Position>(entities.back(), static_cast<float>(i), 0.0f);
     }
 
-    CHECK(created == 10000);
+    TEST_ASSERT(created == 10000, "created == 10000");
 
     // Destroy half
     for (int i = 0; i < 5000; ++i)
@@ -947,13 +879,11 @@ TEST(scale_10k_entities_with_events)
         reg.destroy(entities[i]);
     }
 
-    CHECK(destroyed == 5000);
-    CHECK(reg.entityCount() == 5000);
-
-    PASS("scale_10k_entities_with_events");
+    TEST_ASSERT(destroyed == 5000, "destroyed == 5000");
+    TEST_ASSERT(reg.entityCount() == 5000, "reg.entityCount() == 5000");
 }
 
-TEST(parallel_for_ecs_iteration)
+void test_parallel_for_ecs_iteration()
 {
     // Test parallel_for used to iterate component arrays directly
     Registry reg;
@@ -980,31 +910,27 @@ TEST(parallel_for_ecs_iteration)
         processed.fetch_add(1, std::memory_order_relaxed);
     });
 
-    CHECK(processed.load() == viewCount);
-
-    PASS("parallel_for_ecs_iteration");
+    TEST_ASSERT(processed.load() == viewCount, "processed.load() == viewCount");
 }
 
 // =============================================================================
 // Phase 1 Regression Tests (ensure Phase 2 doesn't break Phase 1)
 // =============================================================================
 
-TEST(regression_entity_lifecycle)
+void test_regression_entity_lifecycle()
 {
     Registry reg;
     Entity e = reg.create();
-    CHECK(reg.isAlive(e));
+    TEST_ASSERT(reg.isAlive(e), "reg.isAlive(e)");
 
     reg.add<Position>(e, 1.0f, 2.0f);
-    CHECK(reg.has<Position>(e));
+    TEST_ASSERT(reg.has<Position>(e), "reg.has<Position>(e)");
 
     reg.destroy(e);
-    CHECK(!reg.isAlive(e));
-
-    PASS("regression_entity_lifecycle");
+    TEST_ASSERT(!reg.isAlive(e), "!reg.isAlive(e)");
 }
 
-TEST(regression_generational_safety)
+void test_regression_generational_safety()
 {
     Registry reg;
     Entity e1 = reg.create();
@@ -1013,14 +939,12 @@ TEST(regression_generational_safety)
 
     Entity e2 = reg.create();
 
-    CHECK(!reg.isAlive(e1));
-    CHECK(reg.isAlive(e2));
-    CHECK(!reg.has<Position>(e1));
-
-    PASS("regression_generational_safety");
+    TEST_ASSERT(!reg.isAlive(e1), "!reg.isAlive(e1)");
+    TEST_ASSERT(reg.isAlive(e2), "reg.isAlive(e2)");
+    TEST_ASSERT(!reg.has<Position>(e1), "!reg.has<Position>(e1)");
 }
 
-TEST(regression_view_iteration)
+void test_regression_view_iteration()
 {
     Registry reg;
 
@@ -1038,16 +962,14 @@ TEST(regression_view_iteration)
     reg.view<Position, Velocity>().each(
         [&count](Entity, Position&, Velocity&) { ++count; });
 
-    CHECK(count == 50);
-
-    PASS("regression_view_iteration");
+    TEST_ASSERT(count == 50, "count == 50");
 }
 
 // =============================================================================
 // DEPENDENCY ANALYSIS TESTS
 // =============================================================================
 
-TEST(system_descriptor_conflict_detection)
+void test_system_descriptor_conflict_detection()
 {
     SystemDescriptor sysA;
     sysA.name = "A";
@@ -1060,8 +982,8 @@ TEST(system_descriptor_conflict_detection)
     sysB.readMask = makeComponentMask<Position>();
 
     // A writes Position, B reads Position — conflict!
-    CHECK(sysA.conflictsWith(sysB));
-    CHECK(sysB.conflictsWith(sysA));
+    TEST_ASSERT(sysA.conflictsWith(sysB), "sysA.conflictsWith(sysB)");
+    TEST_ASSERT(sysB.conflictsWith(sysA), "sysB.conflictsWith(sysA)");
 
     SystemDescriptor sysC;
     sysC.name = "C";
@@ -1069,7 +991,7 @@ TEST(system_descriptor_conflict_detection)
     sysC.readMask = {};
 
     // A writes Position, C writes Health — no conflict
-    CHECK(!sysA.conflictsWith(sysC));
+    TEST_ASSERT(!sysA.conflictsWith(sysC), "!sysA.conflictsWith(sysC)");
 
     // Two readers of Position — no conflict
     SystemDescriptor sysD;
@@ -1077,9 +999,7 @@ TEST(system_descriptor_conflict_detection)
     sysD.writeMask = {};
     sysD.readMask = makeComponentMask<Position>();
 
-    CHECK(!sysB.conflictsWith(sysD));
-
-    PASS("system_descriptor_conflict_detection");
+    TEST_ASSERT(!sysB.conflictsWith(sysD), "!sysB.conflictsWith(sysD)");
 }
 
 // =============================================================================
@@ -1088,16 +1008,65 @@ TEST(system_descriptor_conflict_detection)
 
 int main()
 {
-    std::printf("======================================\n");
-    std::printf("FAT-P ECS Phase 2 Test Suite\n");
-    std::printf("======================================\n\n");
+    std::printf("=== FAT-P ECS Phase 2 Tests ===\n\n");
 
-    // Tests are auto-registered by static initializers above.
-    // By the time we reach main(), all tests have already run.
+    std::printf("[Events]\n");
+    RUN_TEST(test_entity_created_event);
+    RUN_TEST(test_entity_destroyed_event);
+    RUN_TEST(test_component_added_event);
+    RUN_TEST(test_component_removed_event);
+    RUN_TEST(test_component_event_not_fired_for_wrong_type);
+    RUN_TEST(test_scoped_connection_disconnect);
+    RUN_TEST(test_destroy_fires_events_before_removal);
 
-    std::printf("\n======================================\n");
-    std::printf("Results: %d passed, %d failed\n", sPassCount, sFailCount);
-    std::printf("======================================\n");
+    std::printf("\n[Component Masks]\n");
+    RUN_TEST(test_component_mask_basic);
+    RUN_TEST(test_make_component_mask);
+    RUN_TEST(test_component_mask_dead_entity);
+    RUN_TEST(test_component_mask_archetype_matching);
 
-    return sFailCount > 0 ? 1 : 0;
+    std::printf("\n[Command Buffer]\n");
+    RUN_TEST(test_command_buffer_deferred_create);
+    RUN_TEST(test_command_buffer_deferred_destroy);
+    RUN_TEST(test_command_buffer_deferred_add_remove);
+    RUN_TEST(test_command_buffer_clear);
+    RUN_TEST(test_command_buffer_ordering);
+    RUN_TEST(test_command_buffer_with_iteration);
+
+    std::printf("\n[Parallel Command Buffer]\n");
+    RUN_TEST(test_parallel_command_buffer_thread_safe);
+
+    std::printf("\n[Scheduler]\n");
+    RUN_TEST(test_scheduler_basic_execution);
+    RUN_TEST(test_scheduler_non_conflicting_parallel);
+    RUN_TEST(test_scheduler_conflicting_sequential);
+    RUN_TEST(test_scheduler_system_count);
+    RUN_TEST(test_scheduler_empty_run);
+
+    std::printf("\n[Parallel For]\n");
+    RUN_TEST(test_parallel_for_basic);
+    RUN_TEST(test_parallel_for_small_array);
+    RUN_TEST(test_parallel_for_empty);
+    RUN_TEST(test_parallel_for_accumulation);
+
+    std::printf("\n[Integration]\n");
+    RUN_TEST(test_events_and_command_buffer_integration);
+    RUN_TEST(test_scheduler_with_command_buffer);
+    RUN_TEST(test_full_game_loop_simulation);
+    RUN_TEST(test_event_during_iteration_safety);
+    RUN_TEST(test_scale_10k_entities_with_events);
+    RUN_TEST(test_parallel_for_ecs_iteration);
+
+    std::printf("\n[Phase 1 Regression]\n");
+    RUN_TEST(test_regression_entity_lifecycle);
+    RUN_TEST(test_regression_generational_safety);
+    RUN_TEST(test_regression_view_iteration);
+
+    std::printf("\n[Dependency Analysis]\n");
+    RUN_TEST(test_system_descriptor_conflict_detection);
+
+    std::printf("\n=== Results: %d passed, %d failed ===\n",
+                gTestsPassed, gTestsFailed);
+
+    return gTestsFailed > 0 ? 1 : 0;
 }

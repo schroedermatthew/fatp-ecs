@@ -8,6 +8,7 @@
 // Core types
 #include "Entity.h"
 #include "ComponentMask.h"
+#include "TypeId.h"
 #include "ComponentStore.h"
 #include "EventBus.h"
 #include "Registry.h"

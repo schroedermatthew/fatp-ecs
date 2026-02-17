@@ -188,10 +188,35 @@ private:
         return ((Is == PivotIdx || std::get<Is>(mStores)->has(entity)) && ...);
     }
 
-    template <std::size_t... Is>
-    [[nodiscard]] auto getComponents(Entity entity, std::index_sequence<Is...>)
+    // For the pivot store, the data is at the known dense index — use dataAt()
+    // directly instead of re-probing via tryGet(). For all other stores, tryGet()
+    // is required since the entity may be at any dense position in those stores.
+
+    template <std::size_t PivotIdx, std::size_t I>
+    [[nodiscard]] auto& getComponentAt(Entity entity, std::size_t denseIdx)
     {
-        return std::forward_as_tuple(*std::get<Is>(mStores)->tryGet(entity)...);
+        if constexpr (I == PivotIdx)
+        {
+            return std::get<I>(mStores)->dataAt(denseIdx);
+        }
+        else
+        {
+            return *std::get<I>(mStores)->tryGet(entity);
+        }
+    }
+
+    template <std::size_t PivotIdx, std::size_t I>
+    [[nodiscard]] const auto& getComponentAtConst(Entity entity,
+                                                  std::size_t denseIdx) const
+    {
+        if constexpr (I == PivotIdx)
+        {
+            return std::get<I>(mStores)->dataAt(denseIdx);
+        }
+        else
+        {
+            return *std::get<I>(mStores)->tryGet(entity);
+        }
     }
 
     template <typename Func>
@@ -244,11 +269,17 @@ private:
 
             if (entityInAllOthers<PivotIdx>(entity, allIndices))
             {
-                auto components = getComponents(entity, allIndices);
-                std::apply([&](auto&... comps) { func(entity, comps...); },
-                           components);
+                eachWithPivotApply<PivotIdx>(
+                    std::forward<Func>(func), entity, i, allIndices);
             }
         }
+    }
+
+    template <std::size_t PivotIdx, typename Func, std::size_t... Is>
+    void eachWithPivotApply(Func&& func, Entity entity, std::size_t denseIdx,
+                            std::index_sequence<Is...>)
+    {
+        func(entity, getComponentAt<PivotIdx, Is>(entity, denseIdx)...);
     }
 
     template <std::size_t PivotIdx, typename Func>
@@ -265,14 +296,18 @@ private:
 
             if (entityInAllOthers<PivotIdx>(entity, allIndices))
             {
-                std::apply(
-                    [&](auto*... ptrs) {
-                        func(entity, static_cast<const Ts&>(*ptrs)...);
-                    },
-                    std::make_tuple(
-                        std::get<ComponentStore<Ts>*>(mStores)->tryGet(entity)...));
+                eachWithPivotConstApply<PivotIdx>(
+                    std::forward<Func>(func), entity, i, allIndices);
             }
         }
+    }
+
+    template <std::size_t PivotIdx, typename Func, std::size_t... Is>
+    void eachWithPivotConstApply(Func&& func, Entity entity,
+                                 std::size_t denseIdx,
+                                 std::index_sequence<Is...>) const
+    {
+        func(entity, getComponentAtConst<PivotIdx, Is>(entity, denseIdx)...);
     }
 };
 

@@ -21,15 +21,10 @@
 #include <fat_p/Signal.h>
 
 #include "Entity.h"
+#include "TypeId.h"
 
 namespace fatp_ecs
 {
-
-// Forward declarations — typeId<T>() is defined in Registry.h
-using TypeId = std::size_t;
-
-template <typename T>
-TypeId typeId() noexcept;
 
 // =============================================================================
 // Type-Erased Signal Interface
