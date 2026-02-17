@@ -1,30 +1,198 @@
-name: CI
+# =============================================================================
+# .github/workflows/ci.yml
+# =============================================================================
+# CI workflow for fatp-ecs (Entity Component System built on Fat-P)
+#
+# Directory structure:
+#   Headers:    include/fatp_ecs/*.h
+#   Tests:      tests/test_ecs.cpp, test_ecs_phase2.cpp, test_ecs_phase3.cpp, test_clear.cpp
+#   Bench:      bench/benchmark.cpp (separate workflow: benchmarks.yml)
+#   Demo:       demo/main.cpp
+#
+# Dependencies:
+#   - Fat-P (header-only, checked out from schroedermatthew/FatP)
+#
+# Benchmarks are run separately via benchmarks.yml (manual dispatch only).
+# =============================================================================
+
+name: fatp-ecs CI
 
 on:
+  workflow_dispatch:
   push:
-    branches: [ main, master ]
+    paths:
+      - 'include/fatp_ecs/**'
+      - 'tests/**'
+      - 'bench/**'
+      - 'demo/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/ci.yml'
   pull_request:
-    branches: [ main, master ]
+    paths:
+      - 'include/fatp_ecs/**'
+      - 'tests/**'
+      - 'bench/**'
+      - 'demo/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/ci.yml'
 
 jobs:
-  linux:
+  # ===========================================================================
+  # Linux GCC Builds (C++20/C++23)
+  # ===========================================================================
+  linux-gcc:
+    name: Linux GCC-${{ matrix.version }} C++${{ matrix.std }} ${{ matrix.build_type }}
     runs-on: ubuntu-24.04
-
     strategy:
       fail-fast: false
       matrix:
-        compiler: [gcc, clang]
-        build_type: [Debug, Release]
         include:
-          - compiler: gcc
-            cc: gcc-14
-            cxx: g++-14
-          - compiler: clang
-            cc: clang-18
-            cxx: clang++-18
+          - version: 12
+            std: 20
+            build_type: Release
+          - version: 13
+            std: 20
+            build_type: Release
+          - version: 13
+            std: 20
+            build_type: Debug
+          - version: 14
+            std: 23
+            build_type: Release
+    steps:
+      - name: Checkout fatp-ecs
+        uses: actions/checkout@v4
+        with:
+          path: fatp-ecs
 
-    name: Linux / ${{ matrix.compiler }} / ${{ matrix.build_type }}
+      - name: Checkout FatP (dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: schroedermatthew/FatP
+          path: FatP
 
+      - name: Install tools
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build g++-${{ matrix.version }}
+
+      - name: Configure
+        working-directory: fatp-ecs
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_CXX_COMPILER=g++-${{ matrix.version }} \
+            -DCMAKE_CXX_STANDARD=${{ matrix.std }} \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DFATP_INCLUDE_DIR=${{ github.workspace }}/FatP/include
+
+      - name: Build
+        working-directory: fatp-ecs
+        run: cmake --build build --parallel
+
+      - name: Test
+        working-directory: fatp-ecs
+        run: ctest --test-dir build --output-on-failure --parallel 4
+
+  # ===========================================================================
+  # Linux Clang Builds (C++20/C++23)
+  # ===========================================================================
+  linux-clang:
+    name: Linux Clang-${{ matrix.version }} C++${{ matrix.std }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: 16
+            std: 20
+          - version: 17
+            std: 23
+    steps:
+      - name: Checkout fatp-ecs
+        uses: actions/checkout@v4
+        with:
+          path: fatp-ecs
+
+      - name: Checkout FatP (dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: schroedermatthew/FatP
+          path: FatP
+
+      - name: Install Clang
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh ${{ matrix.version }}
+          sudo apt-get install -y cmake ninja-build
+
+      - name: Configure
+        working-directory: fatp-ecs
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_CXX_COMPILER=clang++-${{ matrix.version }} \
+            -DCMAKE_CXX_STANDARD=${{ matrix.std }} \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFATP_INCLUDE_DIR=${{ github.workspace }}/FatP/include
+
+      - name: Build
+        working-directory: fatp-ecs
+        run: cmake --build build --parallel
+
+      - name: Test
+        working-directory: fatp-ecs
+        run: ctest --test-dir build --output-on-failure --parallel 4
+
+  # ===========================================================================
+  # Windows MSVC Builds (C++20/C++23)
+  # ===========================================================================
+  windows-msvc:
+    name: Windows MSVC C++${{ matrix.std }} ${{ matrix.build_type }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - std: 20
+            build_type: Release
+          - std: 20
+            build_type: Debug
+          - std: 23
+            build_type: Release
+    steps:
+      - name: Checkout fatp-ecs
+        uses: actions/checkout@v4
+        with:
+          path: fatp-ecs
+
+      - name: Checkout FatP (dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: schroedermatthew/FatP
+          path: FatP
+
+      - name: Configure
+        working-directory: fatp-ecs
+        shell: pwsh
+        run: |
+          $stdFlag = if (${{ matrix.std }} -eq 23) { "c++latest" } else { "c++${{ matrix.std }}" }
+          cmake -B build `
+            -DCMAKE_CXX_STANDARD=${{ matrix.std }} `
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
+            -DFATP_INCLUDE_DIR=${{ github.workspace }}/FatP/include
+
+      - name: Build
+        working-directory: fatp-ecs
+        run: cmake --build build --config ${{ matrix.build_type }} --parallel
+
+      - name: Test
+        working-directory: fatp-ecs
+        run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure --parallel 4
+
+  # ===========================================================================
+  # Sanitizers (C++20, GCC 13)
+  # ===========================================================================
+  sanitizer-asan:
+    name: AddressSanitizer
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout fatp-ecs
         uses: actions/checkout@v4
@@ -44,9 +212,10 @@ jobs:
         working-directory: fatp-ecs
         run: |
           cmake -B build -G Ninja \
-            -DCMAKE_C_COMPILER=${{ matrix.cc }} \
-            -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
-            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_CXX_COMPILER=g++-13 \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address" \
             -DFATP_INCLUDE_DIR=${{ github.workspace }}/FatP/include
 
       - name: Build
@@ -55,18 +224,13 @@ jobs:
 
       - name: Test
         working-directory: fatp-ecs
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
         run: ctest --test-dir build --output-on-failure --parallel 4
 
-  windows:
-    runs-on: windows-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        build_type: [Debug, Release]
-
-    name: Windows / MSVC / ${{ matrix.build_type }}
-
+  sanitizer-ubsan:
+    name: UndefinedBehaviorSanitizer
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout fatp-ecs
         uses: actions/checkout@v4
@@ -79,17 +243,43 @@ jobs:
           repository: schroedermatthew/FatP
           path: FatP
 
+      - name: Install tools
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build
+
       - name: Configure
         working-directory: fatp-ecs
         run: |
-          cmake -B build `
-            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
+          cmake -B build -G Ninja \
+            -DCMAKE_CXX_COMPILER=g++-13 \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=undefined -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=undefined" \
             -DFATP_INCLUDE_DIR=${{ github.workspace }}/FatP/include
 
       - name: Build
         working-directory: fatp-ecs
-        run: cmake --build build --config ${{ matrix.build_type }} --parallel
+        run: cmake --build build --parallel
 
       - name: Test
         working-directory: fatp-ecs
-        run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure --parallel 4
+        env:
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir build --output-on-failure --parallel 4
+
+  # ===========================================================================
+  # CI Gate
+  # ===========================================================================
+  ci-success:
+    name: CI Success
+    needs: [linux-gcc, linux-clang, windows-msvc, sanitizer-asan, sanitizer-ubsan]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          if [[ "${{ needs.linux-gcc.result }}" != "success" ]]; then exit 1; fi
+          if [[ "${{ needs.linux-clang.result }}" != "success" ]]; then exit 1; fi
+          if [[ "${{ needs.windows-msvc.result }}" != "success" ]]; then exit 1; fi
+          if [[ "${{ needs.sanitizer-asan.result }}" != "success" ]]; then exit 1; fi
+          if [[ "${{ needs.sanitizer-ubsan.result }}" != "success" ]]; then exit 1; fi
+          echo "All checks passed"

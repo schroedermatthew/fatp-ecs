@@ -14,6 +14,7 @@
 // - Signal: Event system (via EventBus)
 // - BitSet: Component masks (via ComponentMask.h)
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -33,17 +34,6 @@
 
 namespace fatp_ecs
 {
-
-// =============================================================================
-// EntityMetadata
-// =============================================================================
-
-/// @brief Per-entity data stored in the SlotMap.
-struct EntityMetadata
-{
-    bool alive = true;
-    ComponentMask mask;
-};
 
 // =============================================================================
 // Registry
@@ -77,9 +67,12 @@ public:
 
     [[nodiscard]] Entity create()
     {
-        EntityHandle handle = mEntities.insert(EntityMetadata{true, {}});
+        EntityHandle handle = mEntities.insert_fast(uint8_t{0});
         Entity entity = EntityTraits::make(handle.index, handle.generation);
-        mEvents.onEntityCreated.emit(entity);
+        if (mEvents.onEntityCreated.slotCount() > 0)
+        {
+            mEvents.onEntityCreated.emit(entity);
+        }
         return entity;
     }
 
@@ -91,7 +84,10 @@ public:
         }
 
         // Fire destruction event before removing anything
-        mEvents.onEntityDestroyed.emit(entity);
+        if (mEvents.onEntityDestroyed.slotCount() > 0)
+        {
+            mEvents.onEntityDestroyed.emit(entity);
+        }
 
         for (auto it = mStores.begin(); it != mStores.end(); ++it)
         {
@@ -113,7 +109,7 @@ public:
 
         EntityHandle handle{EntityTraits::index(entity),
                             EntityTraits::generation(entity)};
-        return mEntities.get(handle) != nullptr;
+        return mEntities.is_valid(handle);
     }
 
     [[nodiscard]] std::size_t entityCount() const noexcept
@@ -138,7 +134,6 @@ public:
 
         T* inserted = store->emplace(entity, std::forward<Args>(args)...);
 
-        updateMask(entity, typeId<T>(), true);
         mEvents.emitComponentAdded<T>(entity, *inserted);
 
         return *inserted;
@@ -159,7 +154,6 @@ public:
         }
 
         mEvents.emitComponentRemoved<T>(entity);
-        updateMask(entity, typeId<T>(), false);
 
         return store->remove(entity);
     }
@@ -223,16 +217,25 @@ public:
     // Component Mask Queries
     // =========================================================================
 
+    /// @brief Compute the component mask for an entity on demand.
+    /// Iterates registered component stores to check which components
+    /// the entity has. O(num_registered_types) — intended for Scheduler
+    /// dependency analysis, not per-entity hot paths.
     [[nodiscard]] ComponentMask mask(Entity entity) const noexcept
     {
-        EntityHandle handle{EntityTraits::index(entity),
-                            EntityTraits::generation(entity)};
-        const auto* meta = mEntities.get(handle);
-        if (meta == nullptr)
+        if (!isAlive(entity))
         {
             return {};
         }
-        return meta->mask;
+        ComponentMask result;
+        for (auto it = mStores.begin(); it != mStores.end(); ++it)
+        {
+            if (it.value()->has(entity))
+            {
+                result.set(it.key());
+            }
+        }
+        return result;
     }
 
     // =========================================================================
@@ -279,15 +282,31 @@ private:
     {
         const TypeId tid = typeId<T>();
 
+        // Fast path: check flat cache first
+        if (tid < kStoreCacheSize && mStoreCache[tid] != nullptr)
+        {
+            return static_cast<ComponentStore<T>*>(mStoreCache[tid]);
+        }
+
         auto* existing = mStores.find(tid);
         if (existing != nullptr)
         {
-            return static_cast<ComponentStore<T>*>(existing->get());
+            auto* raw = static_cast<ComponentStore<T>*>(existing->get());
+            if (tid < kStoreCacheSize)
+            {
+                mStoreCache[tid] = raw;
+            }
+            return raw;
         }
 
         auto store = std::make_unique<ComponentStore<T>>();
         auto* raw = store.get();
         mStores.insert(tid, std::move(store));
+
+        if (tid < kStoreCacheSize)
+        {
+            mStoreCache[tid] = raw;
+        }
         return raw;
     }
 
@@ -295,18 +314,37 @@ private:
     ComponentStore<T>* getStore()
     {
         const TypeId tid = typeId<T>();
+
+        // Fast path: flat cache
+        if (tid < kStoreCacheSize && mStoreCache[tid] != nullptr)
+        {
+            return static_cast<ComponentStore<T>*>(mStoreCache[tid]);
+        }
+
         auto* val = mStores.find(tid);
         if (val == nullptr)
         {
             return nullptr;
         }
-        return static_cast<ComponentStore<T>*>(val->get());
+        auto* raw = static_cast<ComponentStore<T>*>(val->get());
+        if (tid < kStoreCacheSize)
+        {
+            mStoreCache[tid] = raw;
+        }
+        return raw;
     }
 
     template <typename T>
     const ComponentStore<T>* getStore() const
     {
         const TypeId tid = typeId<T>();
+
+        // Fast path: flat cache (const access)
+        if (tid < kStoreCacheSize && mStoreCache[tid] != nullptr)
+        {
+            return static_cast<const ComponentStore<T>*>(mStoreCache[tid]);
+        }
+
         const auto* val = mStores.find(tid);
         if (val == nullptr)
         {
@@ -322,34 +360,22 @@ private:
     }
 
     // =========================================================================
-    // Internal: Mask Management
-    // =========================================================================
-
-    void updateMask(Entity entity, TypeId tid, bool set)
-    {
-        EntityHandle handle{EntityTraits::index(entity),
-                            EntityTraits::generation(entity)};
-        auto* meta = mEntities.get(handle);
-        if (meta != nullptr && tid < kMaxComponentTypes)
-        {
-            if (set)
-            {
-                meta->mask.set(tid);
-            }
-            else
-            {
-                meta->mask.clear(tid);
-            }
-        }
-    }
-
-    // =========================================================================
     // Data Members
     // =========================================================================
 
-    fat_p::SlotMap<EntityMetadata> mEntities;
+    static constexpr std::size_t kStoreCacheSize = 64;
+
+    /// @brief Entity allocator. Stores a 1-byte dummy payload per entity;
+    /// the SlotMap's generational index provides entity identity and ABA safety.
+    /// ComponentMask was removed from here to shrink per-entity size from 40→1
+    /// bytes (5x less memory, 5x less cache pressure on create).
+    fat_p::SlotMap<uint8_t> mEntities;
+
     fat_p::FastHashMap<TypeId, std::unique_ptr<IComponentStore>> mStores;
     EventBus mEvents;
+
+    /// @brief Flat array cache for O(1) component store lookup by TypeId.
+    std::array<IComponentStore*, kStoreCacheSize> mStoreCache{};
 };
 
 } // namespace fatp_ecs

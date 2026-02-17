@@ -188,20 +188,22 @@ private:
         return ((Is == PivotIdx || std::get<Is>(mStores)->has(entity)) && ...);
     }
 
-    // For the pivot store, the data is at the known dense index — use dataAt()
-    // directly instead of re-probing via tryGet(). For all other stores, tryGet()
-    // is required since the entity may be at any dense position in those stores.
+    // For the pivot store, the data is at the known dense index — use
+    // dataAtUnchecked() (no bounds check, just mData[idx]).
+    // For all other stores, we already confirmed membership via has() in
+    // entityInAllOthers, so use getUnchecked() which does one sparse→dense
+    // lookup without re-verifying containment.
 
     template <std::size_t PivotIdx, std::size_t I>
     [[nodiscard]] auto& getComponentAt(Entity entity, std::size_t denseIdx)
     {
         if constexpr (I == PivotIdx)
         {
-            return std::get<I>(mStores)->dataAt(denseIdx);
+            return std::get<I>(mStores)->dataAtUnchecked(denseIdx);
         }
         else
         {
-            return *std::get<I>(mStores)->tryGet(entity);
+            return std::get<I>(mStores)->getUnchecked(entity);
         }
     }
 
@@ -211,11 +213,11 @@ private:
     {
         if constexpr (I == PivotIdx)
         {
-            return std::get<I>(mStores)->dataAt(denseIdx);
+            return std::get<I>(mStores)->dataAtUnchecked(denseIdx);
         }
         else
         {
-            return *std::get<I>(mStores)->tryGet(entity);
+            return std::get<I>(mStores)->getUnchecked(entity);
         }
     }
 

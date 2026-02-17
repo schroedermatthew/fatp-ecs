@@ -1,0 +1,358 @@
+================================================================================
+  fatp_ecs vs EnTT Benchmark
+================================================================================
+
+  Platform: Windows-x64, MSVC 1950
+  Config: warmup=3, batches=15, seed=12345, minBatchMs=50
+  Options: (defaults)
+CPU Frequency Detection Diagnostics:
+  CPUID Leaf 0x16: NOT SUPPORTED
+    Max CPUID leaf:  0x23
+    Raw EAX:         0x0 (base: 0 MHz)
+    Raw EBX:         0x0 (max: 0 MHz)
+    Raw ECX:         0x0 (bus: 0 MHz)
+    Reason:          Base frequency is 0
+  Registry ~MHz:    3686 MHz
+  Using:            Registry base (3686 MHz) - CPUID 0x16 unavailable, using registry directly
+  PDH Monitor:      AVAILABLE
+    Current %:      73.0%
+  Captured state:
+    Reference:      3686 MHz (base)
+    Current:        2690 MHz (measured)
+    Throttle %:     27.0%
+    Reliable:       YES
+
+  Waiting for CPU to stabilize...
+[Waiting: 2690/3686 MHz (27% below base)]
+[Ready: 3686/3686 MHz]
+
+Competitors:
+  [x] fatp_ecs (primary, 64-bit entities)
+  [x] EnTT (32-bit entities)
+  [x] EnTT (64-bit entities)
+
+Design Invariants:
+  1. Round-robin execution with randomized order per run
+  2. Setup/teardown outside timed regions
+  3. All libraries observe same distribution of machine states
+  4. Medians are the primary reported statistic
+
+Entity size: fatp=64-bit, entt-32=32-bit, entt-64=64-bit
+
+================================================================================
+  1. CREATE ENTITIES
+================================================================================
+
+[2026-02-16 23:44:33] Section start CPU: 3686 MHz (base: 3686)
+  Contract: Allocate N entities, no components. Includes entity ID sink to prevent DCE.
+
+  N=1000:
+    fatp_ecs                :     5.90 ns/op  (+/-  8.13)
+    entt-32                 :     8.80 ns/op  (+/-  0.33)
+    entt-64                 :     8.30 ns/op  (+/-  7.67)
+
+  N=10000:
+    fatp_ecs                :    12.55 ns/op  (+/-  1.26)
+    entt-32                 :     7.76 ns/op  (+/-  0.77)
+    entt-64                 :    16.43 ns/op  (+/-  8.66)
+
+  N=100000:
+    fatp_ecs                :    13.26 ns/op  (+/-  1.16)
+    entt-32                 :    11.71 ns/op  (+/-  1.49)
+    entt-64                 :    15.97 ns/op  (+/-  1.57)
+
+  N=1000000:
+    fatp_ecs                :    11.48 ns/op  (+/-  0.27)
+    entt-32                 :    10.47 ns/op  (+/-  0.28)
+    entt-64                 :    13.88 ns/op  (+/-  0.62)
+
+
+================================================================================
+  2. DESTROY ENTITIES
+================================================================================
+
+[2026-02-16 23:44:35] Section start CPU: 3133 MHz (base: 3686)
+  Contract: Create N entities in setup (untimed), then destroy all. Measures destroy throughput.
+
+  N=1000:
+    fatp_ecs                :    12.50 ns/op  (+/-  0.64)
+    entt-32                 :    42.10 ns/op  (+/-  3.10)
+    entt-64                 :    36.20 ns/op  (+/- 27.32)
+
+  N=10000:
+    fatp_ecs                :     4.03 ns/op  (+/-  7.12)
+    entt-32                 :    16.22 ns/op  (+/-  0.65)
+    entt-64                 :    14.04 ns/op  (+/-  1.06)
+
+  N=100000:
+    fatp_ecs                :     4.88 ns/op  (+/-  0.60)
+    entt-32                 :    15.46 ns/op  (+/-  0.39)
+    entt-64                 :    13.33 ns/op  (+/-  0.19)
+
+  N=1000000:
+    fatp_ecs                :     5.75 ns/op  (+/-  0.18)
+    entt-32                 :    15.60 ns/op  (+/-  0.25)
+    entt-64                 :    13.56 ns/op  (+/-  0.36)
+
+
+================================================================================
+  3. ADD 1 COMPONENT (Position)
+================================================================================
+
+[2026-02-16 23:44:38] Section start CPU: 2617 MHz (base: 3686)
+  Contract: Create N entities in setup, then add Position to each. Measures component attachment.
+
+  N=1000:
+    fatp_ecs                :    24.40 ns/op  (+/-  2.96)
+    entt-32                 :    18.30 ns/op  (+/-  1.77)
+    entt-64                 :    26.50 ns/op  (+/-  4.90)
+
+  N=10000:
+    fatp_ecs                :     7.51 ns/op  (+/-  0.80)
+    entt-32                 :     6.12 ns/op  (+/-  0.27)
+    entt-64                 :     6.54 ns/op  (+/-  0.99)
+
+  N=100000:
+    fatp_ecs                :    13.46 ns/op  (+/-  1.56)
+    entt-32                 :     6.67 ns/op  (+/-  1.72)
+    entt-64                 :     8.79 ns/op  (+/-  1.14)
+
+  N=1000000:
+    fatp_ecs                :    18.90 ns/op  (+/-  0.39)
+    entt-32                 :    10.50 ns/op  (+/-  1.12)
+    entt-64                 :    15.33 ns/op  (+/-  1.14)
+
+
+================================================================================
+  4. ADD 3 COMPONENTS (Position + Velocity + Health)
+================================================================================
+
+[2026-02-16 23:44:41] Section start CPU: 2690 MHz (base: 3686)
+  Contract: Create N entities in setup, then add Position+Velocity+Health to each.
+
+  N=1000:
+    fatp_ecs                :    70.10 ns/op  (+/- 16.81)
+    entt-32                 :    57.20 ns/op  (+/- 11.97)
+    entt-64                 :    60.40 ns/op  (+/- 17.89)
+
+  N=10000:
+    fatp_ecs                :    24.70 ns/op  (+/-  5.23)
+    entt-32                 :    19.85 ns/op  (+/-  2.44)
+    entt-64                 :    21.45 ns/op  (+/-  3.73)
+
+  N=100000:
+    fatp_ecs                :    42.98 ns/op  (+/-  3.45)
+    entt-32                 :    24.61 ns/op  (+/-  4.10)
+    entt-64                 :    31.13 ns/op  (+/-  3.03)
+
+  N=1000000:
+    fatp_ecs                :    59.23 ns/op  (+/-  1.75)
+    entt-32                 :    31.16 ns/op  (+/-  1.51)
+    entt-64                 :    44.20 ns/op  (+/-  2.99)
+
+
+================================================================================
+  5. REMOVE COMPONENT (Position)
+================================================================================
+
+[2026-02-16 23:44:46] Section start CPU: 3354 MHz (base: 3686)
+  Contract: Create N entities with Position in setup, then remove Position from each.
+
+  N=1000:
+    fatp_ecs                :     3.80 ns/op  (+/-  0.06)
+    entt-32                 :    13.20 ns/op  (+/-  0.19)
+    entt-64                 :    13.60 ns/op  (+/-  0.20)
+
+  N=10000:
+    fatp_ecs                :     4.25 ns/op  (+/-  0.14)
+    entt-32                 :    14.08 ns/op  (+/-  0.37)
+    entt-64                 :    13.85 ns/op  (+/-  0.20)
+
+  N=100000:
+    fatp_ecs                :     3.93 ns/op  (+/-  1.57)
+    entt-32                 :    14.05 ns/op  (+/-  0.27)
+    entt-64                 :    13.87 ns/op  (+/-  1.58)
+
+  N=1000000:
+    fatp_ecs                :     3.92 ns/op  (+/-  0.75)
+    entt-32                 :    14.17 ns/op  (+/-  0.55)
+    entt-64                 :    13.96 ns/op  (+/-  0.53)
+
+
+================================================================================
+  6. GET COMPONENT (Position)
+================================================================================
+
+[2026-02-16 23:44:49] Section start CPU: 2875 MHz (base: 3686)
+  Contract: Create N entities with Position in setup (persistent), then get Position for each. Sink value to prevent DCE.
+
+  N=1000:
+    fatp_ecs                :     1.70 ns/op  (+/-  0.11)
+    entt-32                 :     1.90 ns/op  (+/-  0.07)
+    entt-64                 :     1.90 ns/op  (+/-  0.09)
+
+  N=10000:
+    fatp_ecs                :     1.85 ns/op  (+/-  0.13)
+    entt-32                 :     1.89 ns/op  (+/-  0.03)
+    entt-64                 :     1.94 ns/op  (+/-  0.16)
+
+  N=100000:
+    fatp_ecs                :     1.79 ns/op  (+/-  0.11)
+    entt-32                 :     1.98 ns/op  (+/-  0.18)
+    entt-64                 :     2.08 ns/op  (+/-  0.13)
+
+  N=1000000:
+    fatp_ecs                :     1.99 ns/op  (+/-  0.34)
+    entt-32                 :     2.11 ns/op  (+/-  0.39)
+    entt-64                 :     2.24 ns/op  (+/-  0.13)
+
+
+================================================================================
+  7. 1-COMPONENT ITERATION (Position)
+================================================================================
+
+[2026-02-16 23:44:52] Section start CPU: 2653 MHz (base: 3686)
+  Contract: N entities with Position. Iterate via view, update + sink.
+
+  N=1000:
+    fatp_ecs                :     3.70 ns/op  (+/-  0.14)
+    entt-32                 :     3.50 ns/op  (+/-  1.82)
+    entt-64                 :     3.80 ns/op  (+/-  0.37)
+
+  N=10000:
+    fatp_ecs                :     1.41 ns/op  (+/-  0.02)
+    entt-32                 :     1.29 ns/op  (+/-  0.10)
+    entt-64                 :     1.23 ns/op  (+/-  0.29)
+
+  N=100000:
+    fatp_ecs                :     1.30 ns/op  (+/-  0.04)
+    entt-32                 :     1.23 ns/op  (+/-  0.04)
+    entt-64                 :     1.26 ns/op  (+/-  0.06)
+
+  N=1000000:
+    fatp_ecs                :     1.30 ns/op  (+/-  0.09)
+    entt-32                 :     1.20 ns/op  (+/-  0.06)
+    entt-64                 :     1.22 ns/op  (+/-  0.06)
+
+
+================================================================================
+  8. 2-COMPONENT ITERATION (Position + Velocity)
+================================================================================
+
+[2026-02-16 23:44:55] Section start CPU: 2801 MHz (base: 3686)
+  Contract: N entities with Position+Velocity. Apply velocity to position.
+
+  N=1000:
+    fatp_ecs                :     4.40 ns/op  (+/-  0.63)
+    entt-32                 :     4.10 ns/op  (+/-  0.64)
+    entt-64                 :     4.10 ns/op  (+/-  0.63)
+
+  N=10000:
+    fatp_ecs                :     1.65 ns/op  (+/-  0.11)
+    entt-32                 :     1.54 ns/op  (+/-  0.07)
+    entt-64                 :     1.53 ns/op  (+/-  0.07)
+
+  N=100000:
+    fatp_ecs                :     1.73 ns/op  (+/-  0.24)
+    entt-32                 :     1.55 ns/op  (+/-  0.05)
+    entt-64                 :     1.62 ns/op  (+/-  0.04)
+
+  N=1000000:
+    fatp_ecs                :     1.90 ns/op  (+/-  0.11)
+    entt-32                 :     1.78 ns/op  (+/-  0.13)
+    entt-64                 :     1.82 ns/op  (+/-  0.12)
+
+
+================================================================================
+  9. 2-COMPONENT SPARSE ITERATION
+================================================================================
+
+[2026-02-16 23:44:59] Section start CPU: 2653 MHz (base: 3686)
+  Contract: N Position, N/2 Velocity (even entities only). Tests sparse join efficiency.
+
+  N=1000:
+    fatp_ecs                :     3.60 ns/op  (+/-  2.70)
+    entt-32                 :     4.20 ns/op  (+/-  0.85)
+    entt-64                 :     4.40 ns/op  (+/-  1.20)
+
+  N=10000:
+    fatp_ecs                :     1.38 ns/op  (+/-  0.09)
+    entt-32                 :     1.60 ns/op  (+/-  0.11)
+    entt-64                 :     1.58 ns/op  (+/-  0.11)
+
+  N=100000:
+    fatp_ecs                :     1.80 ns/op  (+/-  0.11)
+    entt-32                 :     1.64 ns/op  (+/-  0.06)
+    entt-64                 :     1.72 ns/op  (+/-  0.06)
+
+  N=1000000:
+    fatp_ecs                :     2.70 ns/op  (+/-  0.68)
+    entt-32                 :     2.89 ns/op  (+/-  0.12)
+    entt-64                 :     3.50 ns/op  (+/-  0.95)
+
+
+================================================================================
+  10. 3-COMPONENT ITERATION (Position + Velocity + Health)
+================================================================================
+
+[2026-02-16 23:45:02] Section start CPU: 2727 MHz (base: 3686)
+  Contract: N entities with Position+Velocity+Health. Iterate all three.
+
+  N=1000:
+    fatp_ecs                :     3.20 ns/op  (+/-  0.06)
+    entt-32                 :     2.70 ns/op  (+/-  0.06)
+    entt-64                 :     2.80 ns/op  (+/-  0.10)
+
+  N=10000:
+    fatp_ecs                :     3.38 ns/op  (+/-  0.08)
+    entt-32                 :     2.88 ns/op  (+/-  0.07)
+    entt-64                 :     2.83 ns/op  (+/-  0.06)
+
+  N=100000:
+    fatp_ecs                :     3.37 ns/op  (+/-  0.11)
+    entt-32                 :     2.84 ns/op  (+/-  0.09)
+    entt-64                 :     2.88 ns/op  (+/-  0.19)
+
+  N=1000000:
+    fatp_ecs                :     3.72 ns/op  (+/-  0.38)
+    entt-32                 :     3.11 ns/op  (+/-  0.19)
+    entt-64                 :     3.05 ns/op  (+/-  0.20)
+
+
+================================================================================
+  11. FRAGMENTED ITERATION
+================================================================================
+
+[2026-02-16 23:45:07] Section start CPU: 2285 MHz (base: 3686)
+  Contract: Create 2N, destroy odd indices, iterate remaining N with Position. Tests post-deletion density.
+
+  N=10000:
+    fatp_ecs                :     1.33 ns/op  (+/-  0.04)
+    entt-32                 :     1.19 ns/op  (+/-  0.10)
+    entt-64                 :     1.26 ns/op  (+/-  0.08)
+
+  N=100000:
+    fatp_ecs                :     1.40 ns/op  (+/-  0.17)
+    entt-32                 :     1.26 ns/op  (+/-  0.05)
+    entt-64                 :     1.38 ns/op  (+/-  0.07)
+
+
+================================================================================
+  12. MIXED CREATE/DESTROY (churn)
+================================================================================
+
+[2026-02-16 23:45:08] Section start CPU: 2285 MHz (base: 3686)
+  Contract: Pre-create N entities, then create+destroy N more (alternating). Churn stress test.
+
+  N=10000:
+    fatp_ecs                :     7.35 ns/op  (+/-  0.48)
+    entt-32                 :    25.75 ns/op  (+/-  1.39)
+    entt-64                 :    21.45 ns/op  (+/-  4.35)
+
+  N=100000:
+    fatp_ecs                :     7.07 ns/op  (+/-  0.39)
+    entt-32                 :    24.19 ns/op  (+/-  0.65)
+    entt-64                 :    21.75 ns/op  (+/-  1.62)
+
+
+Done. (sink=380541747554982000)

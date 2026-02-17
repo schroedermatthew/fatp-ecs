@@ -1,0 +1,259 @@
+# =============================================================================
+# .github/workflows/benchmarks.yml
+# =============================================================================
+# Benchmark workflow for fatp-ecs vs EnTT
+#
+# Triggered by manual dispatch only. Requires EnTT (installed via package
+# manager or vcpkg) and Fat-P (checked out from schroedermatthew/FatP).
+#
+# Runs benchmarks on GCC, Clang, and MSVC with round-robin execution,
+# CPU monitoring, and statistical reporting via FatPBenchmarkRunner.
+# =============================================================================
+
+name: fatp-ecs Benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      batches:
+        description: 'Measured batches per benchmark'
+        required: false
+        default: '20'
+        type: string
+      warmup:
+        description: 'Warmup runs'
+        required: false
+        default: '3'
+        type: string
+
+jobs:
+  # ===========================================================================
+  # Linux GCC Benchmarks
+  # ===========================================================================
+  benchmarks-gcc:
+    name: Benchmarks GCC-${{ matrix.version }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: 13
+          - version: 14
+    steps:
+      - name: Checkout fatp-ecs
+        uses: actions/checkout@v4
+        with:
+          path: fatp-ecs
+
+      - name: Checkout FatP (dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: schroedermatthew/FatP
+          path: FatP
+
+      - name: Install tools and EnTT
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake ninja-build g++-${{ matrix.version }} libentt-dev
+
+      - name: Configure (with benchmarks)
+        working-directory: fatp-ecs
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_CXX_COMPILER=g++-${{ matrix.version }} \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFATP_ECS_BUILD_BENCH=ON \
+            -DFATP_INCLUDE_DIR=${{ github.workspace }}/FatP/include
+
+      - name: Build
+        working-directory: fatp-ecs
+        run: cmake --build build --parallel --target benchmark
+
+      - name: Run benchmarks
+        working-directory: fatp-ecs
+        env:
+          FATP_BENCH_BATCHES: "${{ inputs.batches }}"
+          FATP_BENCH_WARMUP_RUNS: "${{ inputs.warmup }}"
+          FATP_BENCH_NO_STABILIZE: "1"
+          FATP_BENCH_NO_SCOPE: "1"
+          FATP_BENCH_OUTPUT_CSV: "bench-results.csv"
+        run: ./build/benchmark 2>&1 | tee bench-output.txt
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-fatp-ecs-gcc${{ matrix.version }}
+          path: |
+            fatp-ecs/bench-output.txt
+            fatp-ecs/bench-results.csv
+
+  # ===========================================================================
+  # Linux Clang Benchmarks
+  # ===========================================================================
+  benchmarks-clang:
+    name: Benchmarks Clang-${{ matrix.version }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: 16
+          - version: 17
+    steps:
+      - name: Checkout fatp-ecs
+        uses: actions/checkout@v4
+        with:
+          path: fatp-ecs
+
+      - name: Checkout FatP (dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: schroedermatthew/FatP
+          path: FatP
+
+      - name: Install Clang and EnTT
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh ${{ matrix.version }}
+          sudo apt-get install -y cmake ninja-build libentt-dev
+
+      - name: Configure (with benchmarks)
+        working-directory: fatp-ecs
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_CXX_COMPILER=clang++-${{ matrix.version }} \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFATP_ECS_BUILD_BENCH=ON \
+            -DFATP_INCLUDE_DIR=${{ github.workspace }}/FatP/include
+
+      - name: Build
+        working-directory: fatp-ecs
+        run: cmake --build build --parallel --target benchmark
+
+      - name: Run benchmarks
+        working-directory: fatp-ecs
+        env:
+          FATP_BENCH_BATCHES: "${{ inputs.batches }}"
+          FATP_BENCH_WARMUP_RUNS: "${{ inputs.warmup }}"
+          FATP_BENCH_NO_STABILIZE: "1"
+          FATP_BENCH_NO_SCOPE: "1"
+          FATP_BENCH_OUTPUT_CSV: "bench-results.csv"
+        run: ./build/benchmark 2>&1 | tee bench-output.txt
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-fatp-ecs-clang${{ matrix.version }}
+          path: |
+            fatp-ecs/bench-output.txt
+            fatp-ecs/bench-results.csv
+
+  # ===========================================================================
+  # Windows MSVC Benchmarks
+  # ===========================================================================
+  benchmarks-msvc:
+    name: Benchmarks MSVC
+    runs-on: windows-latest
+    steps:
+      - name: Checkout fatp-ecs
+        uses: actions/checkout@v4
+        with:
+          path: fatp-ecs
+
+      - name: Checkout FatP (dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: schroedermatthew/FatP
+          path: FatP
+
+      - name: Install EnTT via vcpkg
+        run: vcpkg install entt:x64-windows
+
+      - name: Configure (with benchmarks)
+        working-directory: fatp-ecs
+        shell: pwsh
+        run: |
+          cmake -B build `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DFATP_ECS_BUILD_BENCH=ON `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DFATP_INCLUDE_DIR=${{ github.workspace }}/FatP/include
+
+      - name: Build
+        working-directory: fatp-ecs
+        run: cmake --build build --config Release --target benchmark
+
+      - name: Run benchmarks
+        working-directory: fatp-ecs
+        shell: pwsh
+        env:
+          FATP_BENCH_BATCHES: "${{ inputs.batches }}"
+          FATP_BENCH_WARMUP_RUNS: "${{ inputs.warmup }}"
+          FATP_BENCH_NO_STABILIZE: "1"
+          FATP_BENCH_OUTPUT_CSV: "bench-results.csv"
+        run: .\build\Release\benchmark.exe 2>&1 | Tee-Object -FilePath bench-output.txt
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-fatp-ecs-msvc
+          path: |
+            fatp-ecs/bench-output.txt
+            fatp-ecs/bench-results.csv
+
+  # ===========================================================================
+  # Summary
+  # ===========================================================================
+  benchmark-summary:
+    name: Benchmark Summary
+    needs: [benchmarks-gcc, benchmarks-clang, benchmarks-msvc]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bench-fatp-ecs-*
+          path: results
+
+      - name: Generate summary
+        run: |
+          echo "## fatp-ecs Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Compiler | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          for dir in results/bench-fatp-ecs-*/; do
+            name=$(basename "$dir")
+            compiler=${name#bench-fatp-ecs-}
+            if [ -f "$dir/bench-output.txt" ]; then
+              echo "| $compiler | [PASS] |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| $compiler | [FAIL] |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Detailed Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          for dir in results/bench-fatp-ecs-*/; do
+            name=$(basename "$dir")
+            compiler=${name#bench-fatp-ecs-}
+            if [ -f "$dir/bench-output.txt" ]; then
+              echo "<details><summary>$compiler</summary>" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              cat "$dir/bench-output.txt" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              echo "</details>" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+      - name: Upload combined results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-fatp-ecs-summary
+          path: results/

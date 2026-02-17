@@ -4,7 +4,8 @@
 param(
     [switch]$Clean,
     [switch]$NoVisual,
-    [switch]$Debug
+    [switch]$Debug,
+    [switch]$Bench
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,6 +31,10 @@ if (-not $NoVisual) {
     $CMakeArgs += "-DFATP_ECS_BUILD_VISUAL_DEMO=ON"
 }
 
+if ($Bench) {
+    $CMakeArgs += "-DFATP_ECS_BUILD_BENCH=ON"
+}
+
 Write-Host "Configuring ($Config)..." -ForegroundColor Cyan
 cmake @CMakeArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -47,4 +52,7 @@ Write-Host "Build complete. Binaries in $BuildDir/$Config/" -ForegroundColor Gre
 Write-Host "  demo.exe          — terminal demo"
 if (-not $NoVisual) {
     Write-Host "  visual_demo.exe   — SDL2 visual demo"
+}
+if ($Bench) {
+    Write-Host "  benchmark.exe     — FAT-P ECS vs EnTT benchmark"
 }

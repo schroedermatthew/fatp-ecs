@@ -188,6 +188,40 @@ public:
         return mStorage.dataAt(denseIndex);
     }
 
+    // =========================================================================
+    // Unchecked access (for View iteration hot paths)
+    // =========================================================================
+
+    /// @brief Direct data access by dense index — no bounds check.
+    /// @warning Caller must ensure denseIndex < size().
+    [[nodiscard]] T& dataAtUnchecked(std::size_t denseIndex) noexcept
+    {
+        return mStorage.data()[denseIndex];
+    }
+
+    [[nodiscard]] const T& dataAtUnchecked(std::size_t denseIndex) const noexcept
+    {
+        return mStorage.data()[denseIndex];
+    }
+
+    /// @brief Get component by entity without re-verifying membership.
+    /// Combines the sparse→dense lookup into a single step. The caller
+    /// must have already confirmed the entity is in this store (via has()).
+    /// @warning Undefined behavior if entity is not in the store.
+    [[nodiscard]] T& getUnchecked(Entity entity) noexcept
+    {
+        const auto sparseIdx = EntityIndex::index(entity);
+        const auto denseIdx = mStorage.sparse()[sparseIdx];
+        return mStorage.data()[denseIdx];
+    }
+
+    [[nodiscard]] const T& getUnchecked(Entity entity) const noexcept
+    {
+        const auto sparseIdx = EntityIndex::index(entity);
+        const auto denseIdx = mStorage.sparse()[sparseIdx];
+        return mStorage.data()[denseIdx];
+    }
+
     [[nodiscard]] StorageType& storage() noexcept
     {
         return mStorage;

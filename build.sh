@@ -8,6 +8,7 @@ BUILD_DIR="build"
 CONFIG="Release"
 FATP_DIR="../FatP/include"
 VISUAL="ON"
+BENCH="OFF"
 
 for arg in "$@"; do
     case "$arg" in
@@ -19,6 +20,7 @@ for arg in "$@"; do
             ;;
         --no-visual)  VISUAL="OFF" ;;
         --debug)      CONFIG="Debug" ;;
+        --bench)      BENCH="ON" ;;
     esac
 done
 
@@ -27,6 +29,7 @@ CMAKE_ARGS=(
     -DFATP_INCLUDE_DIR="$FATP_DIR"
     -DCMAKE_BUILD_TYPE="$CONFIG"
     -DFATP_ECS_BUILD_VISUAL_DEMO="$VISUAL"
+    -DFATP_ECS_BUILD_BENCH="$BENCH"
 )
 
 echo "Configuring ($CONFIG)..."
@@ -42,3 +45,4 @@ echo ""
 echo "Build complete. Binaries in $BUILD_DIR/"
 echo "  demo              — terminal demo"
 [ "$VISUAL" = "ON" ] && echo "  visual_demo       — SDL2 visual demo"
+[ "$BENCH" = "ON" ] && echo "  benchmark         — FAT-P ECS vs EnTT benchmark"

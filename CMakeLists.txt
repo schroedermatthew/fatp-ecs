@@ -80,6 +80,14 @@ if(FATP_ECS_BUILD_TESTS)
     target_link_libraries(test_ecs_phase3 PRIVATE fatp_ecs)
     target_compile_options(test_ecs_phase3 PRIVATE ${FATP_ECS_WARNING_FLAGS})
     add_test(NAME test_ecs_phase3 COMMAND test_ecs_phase3)
+
+    # Registry::clear() stress test
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_clear.cpp")
+        add_executable(test_clear tests/test_clear.cpp)
+        target_link_libraries(test_clear PRIVATE fatp_ecs)
+        target_compile_options(test_clear PRIVATE ${FATP_ECS_WARNING_FLAGS})
+        add_test(NAME test_clear COMMAND test_clear)
+    endif()
 endif()
 
 # ==============================================================================
@@ -127,5 +135,27 @@ if(FATP_ECS_BUILD_VISUAL_DEMO)
         endif()
     else()
         message(STATUS "Visual demo source not found -- skipping")
+    endif()
+endif()
+
+# ==============================================================================
+# Benchmark Suite (FAT-P ECS vs EnTT)
+# ==============================================================================
+option(FATP_ECS_BUILD_BENCH "Build benchmark suite (requires EnTT via vcpkg)" OFF)
+
+if(FATP_ECS_BUILD_BENCH)
+    find_package(EnTT CONFIG REQUIRED)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/bench/benchmark.cpp")
+        add_executable(benchmark bench/benchmark.cpp)
+        target_link_libraries(benchmark PRIVATE fatp_ecs EnTT::EnTT)
+        # Relaxed warnings for benchmark target — EnTT headers may trigger
+        # warnings under /W4 /WX that are not our responsibility to fix.
+        if(MSVC)
+            target_compile_options(benchmark PRIVATE /W3 /Zc:preprocessor)
+        else()
+            target_compile_options(benchmark PRIVATE -Wall -Wextra -Wpedantic)
+        endif()
+    else()
+        message(STATUS "Benchmark source not found (bench/benchmark.cpp) -- skipping")
     endif()
 endif()
