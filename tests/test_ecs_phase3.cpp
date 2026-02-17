@@ -1050,7 +1050,8 @@ void test_scale_1k_entities_full_pipeline()
 
     // Verify remaining entities are healthy
     auto finalView = registry.view<Health>();
-    finalView.each([]([[maybe_unused]] Entity entity, Health& hp)
+    finalView.each([]([[maybe_unused]] Entity entity,
+                     [[maybe_unused]] Health& hp)
     {
         assert(hp.hp > 0 && "Surviving entities should have positive health");
     });

@@ -59,6 +59,9 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    # FatP has upstream MSVC issues (SmallVector.h, JsonLite.h __VA_OPT__).
+    # Allow failure until those are resolved.
+    continue-on-error: true
 
     strategy:
       fail-fast: false

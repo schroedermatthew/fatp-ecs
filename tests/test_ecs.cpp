@@ -406,7 +406,7 @@ void test_single_component_view()
 
     Entity e1 = registry.create();
     Entity e2 = registry.create();
-    Entity e3 = registry.create();
+    [[maybe_unused]] Entity e3 = registry.create();
 
     registry.add<Position>(e1, 1.0f, 0.0f);
     registry.add<Position>(e2, 2.0f, 0.0f);
@@ -709,9 +709,9 @@ void test_all_entities()
 
     Registry registry;
 
-    Entity e1 = registry.create();
+    [[maybe_unused]] Entity e1 = registry.create();
     Entity e2 = registry.create();
-    Entity e3 = registry.create();
+    [[maybe_unused]] Entity e3 = registry.create();
     registry.destroy(e2);
 
     auto all = registry.allEntities();

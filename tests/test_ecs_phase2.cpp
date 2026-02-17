@@ -590,7 +590,8 @@ void test_scheduler_conflicting_sequential()
     // Both ran (order guaranteed sequential but order doesn't matter)
 
     // Verify both effects applied
-    reg.view<Position>().each([](Entity, Position& pos) {
+    reg.view<Position>().each([]([[maybe_unused]] Entity e,
+                                [[maybe_unused]] Position& pos) {
         assert(pos.x == 1.0f);
         assert(pos.y == 1.0f);
     });
@@ -813,7 +814,8 @@ void test_full_game_loop_simulation()
     TEST_ASSERT(reg.entityCount() < 1000, "reg.entityCount() < 1000");
 
     // Verify physics was applied for survivors (they had 3 full frames of movement)
-    reg.view<Position>().each([](Entity, Position& pos) {
+    reg.view<Position>().each([]([[maybe_unused]] Entity e,
+                                [[maybe_unused]] Position& pos) {
         // Each frame adds 1.0 to x and 0.5 to y
         // Survivors were alive for all 3 frames
         assert(pos.x >= 1.0f); // At least one frame

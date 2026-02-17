@@ -239,7 +239,7 @@ private:
     void eachWithPivotDispatch(Func&& func, std::size_t pivotIdx,
                                std::index_sequence<Is...>)
     {
-        ((pivotIdx == Is
+        (void)((pivotIdx == Is
               ? (eachWithPivot<Is>(std::forward<Func>(func)), true)
               : false) ||
          ...);
@@ -249,7 +249,7 @@ private:
     void eachWithPivotDispatchConst(Func&& func, std::size_t pivotIdx,
                                     std::index_sequence<Is...>) const
     {
-        ((pivotIdx == Is
+        (void)((pivotIdx == Is
               ? (eachWithPivotConst<Is>(std::forward<Func>(func)), true)
               : false) ||
          ...);
