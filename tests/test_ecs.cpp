@@ -416,7 +416,7 @@ void test_single_component_view()
     float sum = 0.0f;
 
     auto view = registry.view<Position>();
-    view.each([&](Entity entity, Position& pos) {
+    view.each([&]([[maybe_unused]] Entity entity, Position& pos) {
         ++count;
         sum += pos.x;
     });
@@ -448,7 +448,7 @@ void test_multi_component_view()
 
     int count = 0;
     auto view = registry.view<Position, Velocity>();
-    view.each([&](Entity entity, Position& pos, Velocity& vel) {
+    view.each([&]([[maybe_unused]] Entity entity, Position& pos, Velocity& vel) {
         pos.x += vel.dx;
         pos.y += vel.dy;
         ++count;
@@ -487,7 +487,10 @@ void test_three_component_view()
 
     int count = 0;
     auto view = registry.view<Position, Velocity, Health>();
-    view.each([&](Entity entity, Position& pos, Velocity& vel, Health& hp) {
+    view.each([&]([[maybe_unused]] Entity entity,
+               [[maybe_unused]] Position& pos,
+               [[maybe_unused]] Velocity& vel,
+               Health& hp) {
         ++count;
         TEST_ASSERT(hp.hp == 100, "Health should be 100");
     });
@@ -504,7 +507,8 @@ void test_empty_view()
     // No entities at all
     int count = 0;
     auto view = registry.view<Position>();
-    view.each([&](Entity entity, Position& pos) { ++count; });
+    view.each([&]([[maybe_unused]] Entity entity,
+               [[maybe_unused]] Position& pos) { ++count; });
 
     TEST_ASSERT(count == 0, "Empty view should visit no entities");
 }
@@ -521,7 +525,8 @@ void test_view_no_matching_entities()
     // View requires Velocity, which no entity has
     int count = 0;
     auto view = registry.view<Velocity>();
-    view.each([&](Entity entity, Velocity& vel) { ++count; });
+    view.each([&]([[maybe_unused]] Entity entity,
+               [[maybe_unused]] Velocity& vel) { ++count; });
 
     TEST_ASSERT(count == 0, "View with unregistered component should visit no entities");
 }
@@ -599,7 +604,8 @@ void test_registry_clear()
     // Views should be empty
     int count = 0;
     auto view = registry.view<Position>();
-    view.each([&](Entity entity, Position& pos) { ++count; });
+    view.each([&]([[maybe_unused]] Entity entity,
+               [[maybe_unused]] Position& pos) { ++count; });
     TEST_ASSERT(count == 0, "View should be empty after clear");
 
     // Should be able to create new entities after clear
@@ -634,7 +640,7 @@ void test_10k_entities()
 
     // Iterate and update positions
     auto view = registry.view<Position, Velocity>();
-    view.each([](Entity entity, Position& pos, Velocity& vel) {
+    view.each([]([[maybe_unused]] Entity entity, Position& pos, Velocity& vel) {
         pos.x += vel.dx;
         pos.y += vel.dy;
     });
@@ -656,7 +662,9 @@ void test_10k_entities()
     // View should only iterate remaining entities
     int count = 0;
     auto view2 = registry.view<Position, Velocity>();
-    view2.each([&](Entity entity, Position& pos, Velocity& vel) { ++count; });
+    view2.each([&]([[maybe_unused]] Entity entity,
+                [[maybe_unused]] Position& pos,
+                [[maybe_unused]] Velocity& vel) { ++count; });
 
     TEST_ASSERT(count == N / 2, "View should visit 5K entities after culling");
 
@@ -683,7 +691,7 @@ void test_modify_components_during_iteration()
 
     // Modify component values during iteration (safe operation)
     auto view = registry.view<Health>();
-    view.each([](Entity entity, Health& hp) {
+    view.each([]([[maybe_unused]] Entity entity, Health& hp) {
         hp.hp = hp.maxHp; // Heal to full
     });
 

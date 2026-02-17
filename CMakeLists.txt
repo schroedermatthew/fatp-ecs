@@ -16,13 +16,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(NOT DEFINED FATP_INCLUDE_DIR)
     # Try sibling directory layout (common for development)
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../FatP/FatP/include")
-        set(FATP_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../FatP/FatP/include")
-    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/FatP/include")
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../FatP/include/fat_p")
+        set(FATP_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../FatP/include")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/FatP/include/fat_p")
         set(FATP_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/FatP/include")
     else()
         message(FATAL_ERROR
-            "FAT-P include directory not found. Set FATP_INCLUDE_DIR or place FAT-P in ../FatP/FatP/include")
+            "FAT-P include directory not found. Set FATP_INCLUDE_DIR or place FAT-P in ../FatP/include/")
     endif()
 endif()
 
@@ -49,15 +49,22 @@ option(FATP_ECS_BUILD_TESTS "Build ECS tests" ON)
 if(FATP_ECS_BUILD_TESTS)
     enable_testing()
 
-    add_executable(test_ecs tests/test_ecs.cpp)
-    target_link_libraries(test_ecs PRIVATE fatp_ecs)
-
-    # Compiler warnings
+    # Shared warning flags
     if(MSVC)
-        target_compile_options(test_ecs PRIVATE /W4 /WX)
+        set(FATP_ECS_WARNING_FLAGS /W4 /WX)
     else()
-        target_compile_options(test_ecs PRIVATE -Wall -Wextra -Wpedantic -Werror)
+        set(FATP_ECS_WARNING_FLAGS -Wall -Wextra -Wpedantic -Werror)
     endif()
 
+    # Phase 1 tests
+    add_executable(test_ecs tests/test_ecs.cpp)
+    target_link_libraries(test_ecs PRIVATE fatp_ecs)
+    target_compile_options(test_ecs PRIVATE ${FATP_ECS_WARNING_FLAGS})
     add_test(NAME test_ecs COMMAND test_ecs)
+
+    # Phase 2 tests
+    add_executable(test_ecs_phase2 tests/test_ecs_phase2.cpp)
+    target_link_libraries(test_ecs_phase2 PRIVATE fatp_ecs)
+    target_compile_options(test_ecs_phase2 PRIVATE ${FATP_ECS_WARNING_FLAGS})
+    add_test(NAME test_ecs_phase2 COMMAND test_ecs_phase2)
 endif()
