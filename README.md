@@ -57,6 +57,60 @@ int hp = applyDamage(currentHp, damage, maxHp);  // clamped to [0, maxHp]
 int score = addScore(currentScore, points);       // saturates at INT_MAX
 ```
 
+## Performance
+
+Benchmarked against [EnTT](https://github.com/skypjack/entt) (v3.14), the industry-standard ECS. All benchmarks use round-robin execution with randomized order, statistical reporting (median of 20 batches), and CPU frequency monitoring via [FatPBenchmarkRunner](https://github.com/schroedermatthew/FatP).
+
+### vs EnTT at 1M entities (GCC-14, GitHub Actions)
+
+| Category | fatp-ecs | EnTT-32 | EnTT-64 | vs EnTT-32 | vs EnTT-64 |
+|---|---|---|---|---|---|
+| Create entities | 7.80 ns | 12.51 ns | 12.68 ns | **0.62x** | **0.62x** |
+| Destroy entities | 8.70 ns | 14.36 ns | 12.75 ns | **0.61x** | **0.68x** |
+| Add 1 component | 17.41 ns | 18.70 ns | 13.61 ns | **0.93x** | 1.28x |
+| Add 3 components | 47.54 ns | 38.18 ns | 40.34 ns | 1.25x | 1.18x |
+| Remove component | 5.91 ns | 19.59 ns | 26.09 ns | **0.30x** | **0.23x** |
+| Get component | 2.67 ns | 4.79 ns | 6.32 ns | **0.56x** | **0.42x** |
+| 1-comp iteration | 0.66 ns | 0.89 ns | 0.91 ns | **0.74x** | **0.73x** |
+| 2-comp iteration | 1.80 ns | 4.61 ns | 4.88 ns | **0.39x** | **0.37x** |
+| Sparse iteration | 2.26 ns | 4.99 ns | 5.13 ns | **0.45x** | **0.44x** |
+| 3-comp iteration | 5.05 ns | 9.24 ns | 7.69 ns | **0.55x** | **0.66x** |
+| Fragmented iter | 0.64 ns | 0.84 ns | 0.94 ns | **0.76x** | **0.68x** |
+| Mixed churn | 15.38 ns | 32.12 ns | 30.78 ns | **0.48x** | **0.50x** |
+
+**Bold** = fatp-ecs faster. EnTT-32 uses 32-bit entity IDs; EnTT-64 uses 64-bit (apples-to-apples with fatp-ecs).
+
+### Cross-compiler summary (largest N, vs best EnTT variant)
+
+| Category | GCC-13 | GCC-14 | Clang-16 | Clang-17 | MSVC |
+|---|---|---|---|---|---|
+| Create | **0.53x** | **0.62x** | **0.65x** | **0.66x** | **0.83x** |
+| Destroy | **0.51x** | **0.61x** | **0.77x** | **0.51x** | **0.38x** |
+| Remove | **0.28x** | **0.30x** | **0.47x** | **0.47x** | **0.29x** |
+| Get | **0.54x** | **0.56x** | **0.80x** | **0.84x** | **0.71x** |
+| Churn | **0.50x** | **0.48x** | **0.61x** | **0.48x** | **0.35x** |
+| 1-comp iter | **0.75x** | **0.74x** | 1.11x | **0.63x** | ~tie |
+| 2-comp iter | **0.46x** | **0.39x** | 1.74x | 1.28x | **0.82x** |
+| 3-comp iter | **0.67x** | **0.55x** | 1.37x | 1.33x | **0.92x** |
+
+Entity lifecycle (create, destroy, remove, churn) and component access (get) are consistently faster across all compilers. Iteration performance varies by compiler — GCC and MSVC favor fatp-ecs, Clang favors EnTT on multi-component views.
+
+### Running benchmarks
+
+Benchmarks require EnTT and are built separately:
+
+```bash
+# Local (Windows, vcpkg)
+cmake -B build -DFATP_ECS_BUILD_BENCH=ON -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake
+cmake --build build --config Release --target benchmark
+build\Release\benchmark.exe
+
+# CI (manual dispatch)
+# Go to Actions > "fatp-ecs Benchmarks" > Run workflow
+```
+
+Environment variables for tuning: `FATP_BENCH_BATCHES` (default 20), `FATP_BENCH_WARMUP_RUNS` (default 3), `FATP_BENCH_NO_STABILIZE=1` (skip CPU wait), `FATP_BENCH_VERBOSE_STATS=1` (detailed output).
+
 ## Building
 
 Header-only. Requires C++20 and FAT-P as a sibling directory or via `FATP_INCLUDE_DIR`.
@@ -123,6 +177,7 @@ g++ -std=c++20 -O2 -I include -I /path/to/FatP/include your_code.cpp -lpthread
 | `FATP_ECS_BUILD_TESTS` | `ON` | Build test executables |
 | `FATP_ECS_BUILD_DEMO` | `ON` | Build terminal demo |
 | `FATP_ECS_BUILD_VISUAL_DEMO` | `OFF` | Build SDL2 visual demo (requires SDL2, SDL2_ttf) |
+| `FATP_ECS_BUILD_BENCH` | `OFF` | Build benchmark suite (requires EnTT via vcpkg) |
 
 ## Demo
 
@@ -227,6 +282,9 @@ include/fatp_ecs/
 ├── SafeMath.h            — CheckedArithmetic gameplay math
 └── FatpEcs.h             — Umbrella header
 
+bench/
+└── benchmark.cpp         — EnTT comparison (FatPBenchmarkRunner, round-robin)
+
 demo/
 ├── Simulation.h          — Shared simulation logic (components, AI, systems)
 ├── main.cpp              — Terminal demo (headless, prints stats)
@@ -235,12 +293,13 @@ demo/
 tests/
 ├── test_ecs.cpp          — Phase 1: Core ECS (27 tests)
 ├── test_ecs_phase2.cpp   — Phase 2: Events & Parallelism (37 tests)
-└── test_ecs_phase3.cpp   — Phase 3: Gameplay Infrastructure (28 tests)
+├── test_ecs_phase3.cpp   — Phase 3: Gameplay Infrastructure (28 tests)
+└── test_clear.cpp        — Registry::clear() stress tests
 ```
 
-## Test Results
+## Tests
 
-92 tests across 3 phases, passing on GCC-14, Clang-18, and MSVC 19.44 in both Debug and Release configurations.
+92 tests across 3 phases, all passing across the full CI matrix.
 
 ```
 Phase 1 — Core ECS:              27 passed
@@ -251,12 +310,14 @@ Total:                            92 passed
 
 ## CI
 
-GitHub Actions runs a 6-configuration matrix on every push:
+GitHub Actions runs a 12-job matrix on every push:
 
-| Compiler | Debug | Release |
-|---|---|---|
-| GCC 14 (Ubuntu 24.04) | Pass | Pass |
-| Clang 18 (Ubuntu 24.04) | Pass | Pass |
-| MSVC 19.44 (Windows Server 2022) | Pass | Pass |
+| Job | Configurations |
+|---|---|
+| Linux GCC | GCC-12 (C++20), GCC-13 (C++20 Debug+Release), GCC-14 (C++23) |
+| Linux Clang | Clang-16 (C++20), Clang-17 (C++23) |
+| Windows MSVC | C++20 (Debug+Release), C++23 |
+| Sanitizers | AddressSanitizer, UndefinedBehaviorSanitizer |
+| Gate | CI Success (aggregates all jobs) |
 
-All configurations compile clean with `-Wall -Wextra -Wpedantic -Werror` (GCC/Clang) and `/W4 /WX /Zc:preprocessor` (MSVC).
+Benchmarks run separately via manual dispatch across GCC-13, GCC-14, Clang-16, Clang-17, and MSVC.
