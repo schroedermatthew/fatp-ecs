@@ -92,4 +92,4 @@ jobs:
 
       - name: Test
         working-directory: fatp-ecs
-        run: ctest --test-dir build --config ${{ matrix.build_type }} --output-on-failure --parallel 4
+        run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure --parallel 4
