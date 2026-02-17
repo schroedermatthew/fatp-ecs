@@ -67,4 +67,10 @@ if(FATP_ECS_BUILD_TESTS)
     target_link_libraries(test_ecs_phase2 PRIVATE fatp_ecs)
     target_compile_options(test_ecs_phase2 PRIVATE ${FATP_ECS_WARNING_FLAGS})
     add_test(NAME test_ecs_phase2 COMMAND test_ecs_phase2)
+
+    # Phase 3 tests
+    add_executable(test_ecs_phase3 tests/test_ecs_phase3.cpp)
+    target_link_libraries(test_ecs_phase3 PRIVATE fatp_ecs)
+    target_compile_options(test_ecs_phase3 PRIVATE ${FATP_ECS_WARNING_FLAGS})
+    add_test(NAME test_ecs_phase3 COMMAND test_ecs_phase3)
 endif()
