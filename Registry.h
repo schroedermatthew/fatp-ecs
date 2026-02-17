@@ -168,13 +168,12 @@ public:
             return *existing;
         }
 
-        store->emplace(entity, std::forward<Args>(args)...);
-        T& ref = *store->tryGet(entity);
+        T* inserted = store->emplace(entity, std::forward<Args>(args)...);
 
         updateMask(entity, typeId<T>(), true);
-        mEvents.emitComponentAdded<T>(entity, ref);
+        mEvents.emitComponentAdded<T>(entity, *inserted);
 
-        return ref;
+        return *inserted;
     }
 
     template <typename T>

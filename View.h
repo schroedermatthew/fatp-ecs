@@ -7,12 +7,14 @@
 
 // FAT-P components used (indirectly via ComponentStore):
 // - SparseSetWithData: Dense array iteration for cache-friendly access
+//   - EntityIndex policy: Dense array stores full 64-bit Entity values
 //
 // Views iterate the smallest ComponentStore and probe the others for
 // intersection (smallest-set intersection strategy). Entity handles
-// are read from ComponentStore::entities() which provides full 64-bit
-// Entity values with generation, enabling safe use of the entities for
-// destroy(), isAlive(), and command buffer operations.
+// are read from ComponentStore::dense() which provides full 64-bit
+// Entity values with generation (via EntityIndex policy), enabling
+// safe use of the entities for destroy(), isAlive(), and command
+// buffer operations.
 
 #include <algorithm>
 #include <cstddef>
@@ -133,7 +135,7 @@ private:
     void eachSingleComponent(Func&& func)
     {
         auto* store = std::get<0>(mStores);
-        const auto& fullEntities = store->entities();
+        const auto& fullEntities = store->dense();
         const std::size_t cnt = store->size();
 
         for (std::size_t i = 0; i < cnt; ++i)
@@ -146,7 +148,7 @@ private:
     void eachSingleComponentConst(Func&& func) const
     {
         const auto* store = std::get<0>(mStores);
-        const auto& fullEntities = store->entities();
+        const auto& fullEntities = store->dense();
         const std::size_t cnt = store->size();
 
         for (std::size_t i = 0; i < cnt; ++i)
@@ -232,7 +234,7 @@ private:
     void eachWithPivot(Func&& func)
     {
         auto* pivotStore = std::get<PivotIdx>(mStores);
-        const auto& fullEntities = pivotStore->entities();
+        const auto& fullEntities = pivotStore->dense();
         const std::size_t cnt = pivotStore->size();
         constexpr auto allIndices = std::index_sequence_for<Ts...>{};
 
@@ -253,7 +255,7 @@ private:
     void eachWithPivotConst(Func&& func) const
     {
         const auto* pivotStore = std::get<PivotIdx>(mStores);
-        const auto& fullEntities = pivotStore->entities();
+        const auto& fullEntities = pivotStore->dense();
         const std::size_t cnt = pivotStore->size();
         constexpr auto allIndices = std::index_sequence_for<Ts...>{};
 

@@ -85,6 +85,29 @@ struct EntityTraits
     static constexpr IndexType kMaxIndex = std::numeric_limits<IndexType>::max() - 1;
 };
 
+// =============================================================================
+// EntityIndex — IndexPolicy for SparseSet/SparseSetWithData
+// =============================================================================
+
+/**
+ * @brief IndexPolicy that extracts the 32-bit slot index from a 64-bit Entity.
+ *
+ * This enables SparseSet and SparseSetWithData to key on full Entity values
+ * while indexing the sparse array by the 32-bit slot index. Two entities with
+ * the same slot index (different generations) map to the same sparse slot,
+ * which is the correct semantic: a slot is occupied by at most one live entity.
+ */
+struct EntityIndex
+{
+    using sparse_index_type = EntityTraits::IndexType;
+
+    [[nodiscard]] static constexpr sparse_index_type index(
+        const Entity& entity) noexcept
+    {
+        return EntityTraits::index(entity);
+    }
+};
+
 } // namespace fatp_ecs
 
 // std::hash specialization so Entity can be used in unordered containers.

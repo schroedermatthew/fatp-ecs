@@ -7,16 +7,11 @@
 
 // FAT-P components used:
 // - SparseSetWithData: Per-component-type storage with O(1) add/remove/get
-//   - indexOf(): Keeps the parallel entity vector in sync on erase
-//
-// Each ComponentStore<T> maintains a parallel std::vector<Entity> alongside
-// the SparseSet's dense array. The SparseSet stores uint32_t indices (losing
-// the Entity generation); the parallel vector stores full 64-bit entities.
-// Views read from this vector to yield correct generational Entity handles.
-//
-// The parallel vector mirrors the SparseSet's swap-with-back erasure via
-// indexOf(), which returns the dense index of a given sparse key before
-// the erase modifies it.
+//   - EntityIndex policy: Keys on full 64-bit Entity, indexes sparse array
+//     by the 32-bit slot index. The dense array stores full Entity values,
+//     eliminating the need for a parallel entity vector.
+//   - tryEmplace(): Returns pointer to inserted data, avoiding the
+//     double-lookup of emplace() + tryGet().
 
 #include <cstddef>
 #include <cstdint>
@@ -59,6 +54,11 @@ public:
 /**
  * @brief Typed component storage wrapping SparseSetWithData.
  *
+ * Uses EntityIndex policy so the SparseSet keys on full 64-bit Entity
+ * values while indexing the sparse array by the 32-bit slot index. The
+ * dense array stores full Entity values directly, providing generational
+ * handles for Views without a parallel vector.
+ *
  * @tparam T The component data type.
  *
  * @note Thread-safety: NOT thread-safe. The Registry serializes access.
@@ -68,8 +68,7 @@ class ComponentStore : public IComponentStore
 {
 public:
     using DataType = T;
-    using IndexType = EntityTraits::IndexType;
-    using StorageType = fat_p::SparseSetWithData<IndexType, T>;
+    using StorageType = fat_p::SparseSetWithData<Entity, T, EntityIndex>;
 
     ComponentStore() = default;
 
@@ -79,31 +78,12 @@ public:
 
     [[nodiscard]] bool has(Entity entity) const noexcept override
     {
-        return mStorage.contains(EntityTraits::toIndex(entity));
+        return mStorage.contains(entity);
     }
 
     bool remove(Entity entity) override
     {
-        IndexType idx = EntityTraits::toIndex(entity);
-        if (!mStorage.contains(idx))
-        {
-            return false;
-        }
-
-        // Get the dense index BEFORE erasing so we can mirror swap-with-back
-        std::size_t denseIdx = mStorage.indexOf(idx);
-        std::size_t lastIdx = mStorage.size() - 1;
-
-        mStorage.erase(idx);
-
-        // Mirror swap-with-back in entity vector
-        if (denseIdx < lastIdx)
-        {
-            mEntities[denseIdx] = mEntities[lastIdx];
-        }
-        mEntities.pop_back();
-
-        return true;
+        return mStorage.erase(entity);
     }
 
     [[nodiscard]] std::size_t size() const noexcept override
@@ -119,70 +99,76 @@ public:
     void clear() override
     {
         mStorage.clear();
-        mEntities.clear();
     }
 
     // =========================================================================
     // Typed operations
     // =========================================================================
 
-    bool add(Entity entity, const T& component)
+    /**
+     * @brief Inserts a component for an entity via copy.
+     *
+     * @param entity    The entity to associate the component with.
+     * @param component Component value to copy.
+     * @return Pointer to inserted data, or nullptr if entity already had one.
+     */
+    T* add(Entity entity, const T& component)
     {
-        bool inserted = mStorage.insert(EntityTraits::toIndex(entity), component);
-        if (inserted)
-        {
-            mEntities.push_back(entity);
-        }
-        return inserted;
+        return mStorage.tryEmplace(entity, component);
     }
 
-    bool add(Entity entity, T&& component)
+    /**
+     * @brief Inserts a component for an entity via move.
+     *
+     * @param entity    The entity to associate the component with.
+     * @param component Component value to move.
+     * @return Pointer to inserted data, or nullptr if entity already had one.
+     */
+    T* add(Entity entity, T&& component)
     {
-        bool inserted = mStorage.insert(EntityTraits::toIndex(entity), std::move(component));
-        if (inserted)
-        {
-            mEntities.push_back(entity);
-        }
-        return inserted;
+        return mStorage.tryEmplace(entity, std::move(component));
     }
 
+    /**
+     * @brief Constructs a component in-place for an entity.
+     *
+     * @tparam Args Constructor argument types for T.
+     * @param entity The entity to associate the component with.
+     * @param args   Arguments forwarded to T's constructor.
+     * @return Pointer to inserted data, or nullptr if entity already had one.
+     */
     template <typename... Args>
-    bool emplace(Entity entity, Args&&... args)
+    T* emplace(Entity entity, Args&&... args)
     {
-        bool inserted = mStorage.emplace(EntityTraits::toIndex(entity),
-                                         std::forward<Args>(args)...);
-        if (inserted)
-        {
-            mEntities.push_back(entity);
-        }
-        return inserted;
+        return mStorage.tryEmplace(entity, std::forward<Args>(args)...);
     }
 
     [[nodiscard]] T* tryGet(Entity entity) noexcept
     {
-        return mStorage.tryGet(EntityTraits::toIndex(entity));
+        return mStorage.tryGet(entity);
     }
 
     [[nodiscard]] const T* tryGet(Entity entity) const noexcept
     {
-        return mStorage.tryGet(EntityTraits::toIndex(entity));
+        return mStorage.tryGet(entity);
     }
 
     [[nodiscard]] T& get(Entity entity)
     {
-        return mStorage.get(EntityTraits::toIndex(entity));
+        return mStorage.get(entity);
     }
 
     [[nodiscard]] const T& get(Entity entity) const
     {
-        return mStorage.get(EntityTraits::toIndex(entity));
+        return mStorage.get(entity);
     }
 
     // =========================================================================
     // Direct storage access (for View iteration)
     // =========================================================================
 
-    [[nodiscard]] const std::vector<IndexType>& dense() const noexcept
+    /// @brief Returns the dense key array (full Entity values with generation).
+    [[nodiscard]] const std::vector<Entity>& dense() const noexcept
     {
         return mStorage.dense();
     }
@@ -202,12 +188,6 @@ public:
         return mStorage.dataAt(denseIndex);
     }
 
-    /// @brief Returns the parallel entity vector (full Entity with generation).
-    [[nodiscard]] const std::vector<Entity>& entities() const noexcept
-    {
-        return mEntities;
-    }
-
     [[nodiscard]] StorageType& storage() noexcept
     {
         return mStorage;
@@ -220,7 +200,6 @@ public:
 
 private:
     StorageType mStorage;
-    std::vector<Entity> mEntities;  // Parallel to dense: full Entity with generation
 };
 
 } // namespace fatp_ecs
