@@ -29,7 +29,12 @@ endif()
 message(STATUS "FAT-P include directory: ${FATP_INCLUDE_DIR}")
 
 add_library(fat_p INTERFACE)
-target_include_directories(fat_p INTERFACE "${FATP_INCLUDE_DIR}")
+# SYSTEM: Treat FatP as an external dependency. FatP intentionally uses
+# alignas(cache_line) on lock-free types (C4324) and has other MSVC
+# informational warnings that are by design. FatP's own build props
+# disable C4100/C4189 and don't use /WX. SYSTEM prevents these from
+# failing our /WX build without suppressing warnings in our own code.
+target_include_directories(fat_p SYSTEM INTERFACE "${FATP_INCLUDE_DIR}")
 
 # ==============================================================================
 # ECS Library (header-only)

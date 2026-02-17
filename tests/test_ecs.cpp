@@ -246,7 +246,7 @@ void test_entity_reuse()
 
     // Create and destroy, creating a free slot
     Entity e1 = registry.create();
-    uint32_t originalIndex [[maybe_unused]] = e1.get();
+    auto originalIndex [[maybe_unused]] = e1.get();
     registry.destroy(e1);
 
     // Create again — the SlotMap may reuse the slot
