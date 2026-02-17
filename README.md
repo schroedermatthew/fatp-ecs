@@ -61,17 +61,99 @@ int score = addScore(currentScore, points);       // saturates at INT_MAX
 
 Header-only. Requires C++20 and FAT-P as a sibling directory or via `FATP_INCLUDE_DIR`.
 
-```bash
-cmake -B build -DFATP_INCLUDE_DIR=/path/to/FatP/include
-cmake --build build
-ctest --test-dir build
+### Build Scripts
+
+The easiest way to build everything:
+
+**Windows (PowerShell):**
+```powershell
+.\build.ps1 -Clean              # full clean build with SDL2 visual demo
+.\build.ps1 -NoVisual           # skip SDL2, terminal demo + tests only
+.\build.ps1 -Debug              # debug build
 ```
 
-Or directly:
+**Windows (batch):**
+```bat
+build.bat clean                 :: full clean build with SDL2 visual demo
+build.bat novisual              :: skip SDL2
+build.bat debug                 :: debug build
+```
 
+**Linux / macOS (bash):**
+```bash
+./build.sh --clean              # full clean build
+./build.sh --no-visual          # skip SDL2
+./build.sh --debug              # debug build
+```
+
+### Manual CMake
+
+**Terminal demo + tests only (no SDL2 required):**
+```bash
+cmake -B build -DFATP_INCLUDE_DIR=../FatP/include
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+```
+
+**With SDL2 visual demo (Windows / vcpkg):**
+```bash
+cmake -B build -DFATP_INCLUDE_DIR=../FatP/include -DFATP_ECS_BUILD_VISUAL_DEMO=ON -DCMAKE_TOOLCHAIN_FILE="<vcpkg-root>/scripts/buildsystems/vcpkg.cmake"
+cmake --build build --config Release
+```
+
+Run `vcpkg integrate install` to find your toolchain path. SDL2 and SDL2_ttf are installed automatically from `vcpkg.json`.
+
+**With SDL2 visual demo (Linux):**
+```bash
+sudo apt install libsdl2-dev libsdl2-ttf-dev
+cmake -B build -DFATP_INCLUDE_DIR=../FatP/include -DFATP_ECS_BUILD_VISUAL_DEMO=ON
+cmake --build build
+```
+
+**Direct compilation (no CMake):**
 ```bash
 g++ -std=c++20 -O2 -I include -I /path/to/FatP/include your_code.cpp -lpthread
 ```
+
+### CMake Options
+
+| Option | Default | Description |
+|---|---|---|
+| `FATP_INCLUDE_DIR` | auto-detect | Path to FAT-P include directory |
+| `FATP_ECS_BUILD_TESTS` | `ON` | Build test executables |
+| `FATP_ECS_BUILD_DEMO` | `ON` | Build terminal demo |
+| `FATP_ECS_BUILD_VISUAL_DEMO` | `OFF` | Build SDL2 visual demo (requires SDL2, SDL2_ttf) |
+
+## Demo
+
+### Terminal Demo
+
+Runs a headless space battle simulation exercising all 19 FAT-P components:
+
+```bash
+build/Release/demo.exe
+build/Release/demo.exe --wave-size 100 --turrets 8 --frames 500
+```
+
+### Visual Demo (SDL2)
+
+Real-time rendering of the space battle. The actual C++ ECS ticks every frame — SDL2 draws the result. Frame time shown is the real end-to-end cost.
+
+```bash
+build/Release/visual_demo.exe
+build/Release/visual_demo.exe --wave-size 100 --turrets 8
+```
+
+**Controls:**
+
+| Key | Action |
+|---|---|
+| Space | Pause / resume |
+| 1 / 2 / 3 | Speed 1x / 2x / 5x |
+| F | Toggle vsync (capped 60fps vs uncapped) |
+| R | Reset simulation |
+| + / - | Increase / decrease wave size |
+| Escape | Quit |
 
 ## FAT-P Component Usage
 
@@ -144,6 +226,11 @@ include/fatp_ecs/
 ├── SystemToggle.h        — FeatureManager-backed system toggles
 ├── SafeMath.h            — CheckedArithmetic gameplay math
 └── FatpEcs.h             — Umbrella header
+
+demo/
+├── Simulation.h          — Shared simulation logic (components, AI, systems)
+├── main.cpp              — Terminal demo (headless, prints stats)
+└── visual_main.cpp       — SDL2 visual demo (real-time rendering)
 
 tests/
 ├── test_ecs.cpp          — Phase 1: Core ECS (27 tests)

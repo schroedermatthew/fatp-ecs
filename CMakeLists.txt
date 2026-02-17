@@ -96,3 +96,36 @@ if(FATP_ECS_BUILD_DEMO)
         message(STATUS "Demo source not found (demo/main.cpp) -- skipping demo target")
     endif()
 endif()
+
+# ==============================================================================
+# Visual Demo (Phase 4b — SDL2)
+# ==============================================================================
+option(FATP_ECS_BUILD_VISUAL_DEMO "Build SDL2 visual demo (requires SDL2, SDL2_ttf)" OFF)
+
+if(FATP_ECS_BUILD_VISUAL_DEMO)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/demo/visual_main.cpp")
+        find_package(SDL2 REQUIRED)
+        find_package(SDL2_ttf REQUIRED)
+
+        add_executable(visual_demo demo/visual_main.cpp)
+        target_link_libraries(visual_demo PRIVATE fatp_ecs)
+        target_compile_options(visual_demo PRIVATE ${FATP_ECS_WARNING_FLAGS})
+
+        # SDL2 linking varies by platform and find module version
+        if(TARGET SDL2::SDL2)
+            target_link_libraries(visual_demo PRIVATE SDL2::SDL2 SDL2::SDL2main)
+        else()
+            target_include_directories(visual_demo PRIVATE ${SDL2_INCLUDE_DIRS})
+            target_link_libraries(visual_demo PRIVATE ${SDL2_LIBRARIES})
+        endif()
+
+        if(TARGET SDL2_ttf::SDL2_ttf)
+            target_link_libraries(visual_demo PRIVATE SDL2_ttf::SDL2_ttf)
+        else()
+            target_include_directories(visual_demo PRIVATE ${SDL2_TTF_INCLUDE_DIRS})
+            target_link_libraries(visual_demo PRIVATE ${SDL2_TTF_LIBRARIES})
+        endif()
+    else()
+        message(STATUS "Visual demo source not found -- skipping")
+    endif()
+endif()
