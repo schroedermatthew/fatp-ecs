@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -361,6 +362,7 @@ public:
     // --- Accessors ---
 
     const SimConfig& config() const noexcept { return mConfig; }
+    SimConfig& config() noexcept { return mConfig; }
     const SimStats& stats() const noexcept { return mStats; }
     Registry& registry() noexcept { return mRegistry; }
     const Registry& registry() const noexcept { return mRegistry; }
@@ -718,12 +720,28 @@ private:
         int waveNum = frame / mConfig.spawnInterval;
         float spacing = mConfig.arenaHeight /
                         static_cast<float>(mConfig.waveSize + 1);
+
+        std::uniform_real_distribution<float> xJitter(0.0f, 80.0f);
+        std::uniform_real_distribution<float> yJitter(-spacing * 0.4f, spacing * 0.4f);
+        std::uniform_real_distribution<float> speedJitter(0.7f, 1.3f);
+        std::uniform_real_distribution<float> dyJitter(-0.5f, 0.5f);
+
         for (int i = 0; i < mConfig.waveSize; ++i)
         {
             Entity enemy = mTemplates.spawn(mRegistry, "enemy");
             if (enemy == NullEntity) { continue; }
-            float yPos = spacing * static_cast<float>(i + 1);
-            mRegistry.get<Position>(enemy).y = yPos;
+
+            float yPos = spacing * static_cast<float>(i + 1) + yJitter(mRng);
+            yPos = std::clamp(yPos, 10.0f, mConfig.arenaHeight - 10.0f);
+
+            auto& pos = mRegistry.get<Position>(enemy);
+            pos.x = mConfig.arenaWidth + xJitter(mRng);
+            pos.y = yPos;
+
+            auto& vel = mRegistry.get<Velocity>(enemy);
+            vel.dx = -mConfig.enemySpeed * speedJitter(mRng);
+            vel.dy = dyJitter(mRng);
+
             mRegistry.add<EnemyTag>(enemy);
             mRegistry.add<AIComponent>(enemy, enemy, 50, 50);
             ++mStats.totalSpawned;
@@ -748,4 +766,5 @@ private:
     SimStats mStats;
     fat_p::CircularBuffer<double, 512> mFrameTimes;
     fat_p::ScopedConnection mDestroyConn;
+    std::mt19937 mRng{42};
 };

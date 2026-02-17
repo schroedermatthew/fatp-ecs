@@ -386,13 +386,14 @@ private:
 
         std::snprintf(buf, sizeof(buf),
             "Spawned: %d   Peak: %zu   Bullets: %d   AI changes: %d   "
-            "Wave: %d   FAT-P: 19/19",
+            "Wave: %d   Interval: %d   FAT-P: 19/19",
             s.totalSpawned, s.peakEntities, s.bulletsSpawned,
-            s.totalAIStateChanges, s.frame / sim.config().spawnInterval);
+            s.totalAIStateChanges, s.frame / std::max(1, sim.config().spawnInterval),
+            sim.config().spawnInterval);
         renderText(buf, 10, bottomY + 4, Colors::HUD_LABEL, mFontSmall);
 
         // Controls hint
-        renderText("[Space] Pause  [1-3] Speed  [F] VSync  [R] Reset  [+/-] Wave  [Esc] Quit",
+        renderText("[Space] Pause  [1-3] Speed  [F] VSync  [R] Reset  [+/-] Wave  [[ ]] Interval  [Esc] Quit",
                    mWindowW - 550, bottomY + 4, {50, 60, 80, 255}, mFontSmall);
 
         // AI state legend (top-right)
@@ -434,7 +435,7 @@ int main(int argc, char* argv[])
     config.arenaWidth = 1100.0f;
     config.arenaHeight = 650.0f;
     config.totalFrames = 0; // Infinite — visual demo runs until user quits
-    config.spawnInterval = 5;
+    config.spawnInterval = 30;
     config.waveSize = 20;
 
     // Parse args
@@ -607,9 +608,19 @@ int main(int argc, char* argv[])
                 case SDLK_PLUS:
                 case SDLK_EQUALS:
                     config.waveSize = std::min(200, config.waveSize + 10);
+                    sim->config().waveSize = config.waveSize;
                     break;
                 case SDLK_MINUS:
                     config.waveSize = std::max(5, config.waveSize - 10);
+                    sim->config().waveSize = config.waveSize;
+                    break;
+                case SDLK_RIGHTBRACKET:
+                    config.spawnInterval = std::max(1, config.spawnInterval - 5);
+                    sim->config().spawnInterval = config.spawnInterval;
+                    break;
+                case SDLK_LEFTBRACKET:
+                    config.spawnInterval = std::min(120, config.spawnInterval + 5);
+                    sim->config().spawnInterval = config.spawnInterval;
                     break;
                 default:
                     break;
