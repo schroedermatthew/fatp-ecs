@@ -196,6 +196,33 @@ class ParallelCommandBuffer
 public:
     ParallelCommandBuffer() = default;
 
+    /**
+     * @brief Records a deferred entity creation (thread-safe).
+     *
+     * @param onCreate Optional callback receiving the newly created Entity.
+     */
+    void create(std::function<void(Registry&, Entity)> onCreate = nullptr)
+    {
+        Command c;
+        c.kind = CommandKind::Create;
+        if (onCreate)
+        {
+            c.apply = [cb = std::move(onCreate)](Registry& reg) {
+                Entity e = CommandBuffer::createEntity(reg);
+                cb(reg, e);
+            };
+        }
+        else
+        {
+            c.apply = [](Registry& reg) {
+                CommandBuffer::createEntity(reg);
+            };
+        }
+
+        std::lock_guard<std::mutex> lock(mMutex);
+        mCommands.push_back(std::move(c));
+    }
+
     /// @brief Records a deferred entity destruction (thread-safe).
     bool destroy(Entity entity)
     {
