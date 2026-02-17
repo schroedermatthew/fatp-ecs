@@ -3,8 +3,8 @@
 # =============================================================================
 # Benchmark workflow for fatp-ecs vs EnTT
 #
-# Triggered by manual dispatch only. Requires EnTT (installed via package
-# manager or vcpkg) and Fat-P (checked out from schroedermatthew/FatP).
+# Triggered by manual dispatch only. Requires EnTT (installed from source
+# or vcpkg) and Fat-P (checked out from schroedermatthew/FatP).
 #
 # Runs benchmarks on GCC, Clang, and MSVC with round-robin execution,
 # CPU monitoring, and statistical reporting via FatPBenchmarkRunner.
@@ -51,10 +51,27 @@ jobs:
           repository: schroedermatthew/FatP
           path: FatP
 
-      - name: Install tools and EnTT
+      - name: Install tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y cmake ninja-build g++-${{ matrix.version }} libentt-dev
+          sudo apt-get install -y cmake ninja-build g++-${{ matrix.version }}
+
+      - name: Cache EnTT
+        id: cache-entt
+        uses: actions/cache@v4
+        with:
+          path: ~/entt-install
+          key: entt-gcc${{ matrix.version }}-v1
+
+      - name: Install EnTT from source
+        if: steps.cache-entt.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch v3.14.0 https://github.com/skypjack/entt.git ~/entt-src
+          cmake -S ~/entt-src -B ~/entt-build \
+            -DCMAKE_CXX_COMPILER=g++-${{ matrix.version }} \
+            -DCMAKE_INSTALL_PREFIX=$HOME/entt-install \
+            -DENTT_BUILD_TESTING=OFF
+          cmake --install ~/entt-build
 
       - name: Configure (with benchmarks)
         working-directory: fatp-ecs
@@ -63,7 +80,8 @@ jobs:
             -DCMAKE_CXX_COMPILER=g++-${{ matrix.version }} \
             -DCMAKE_BUILD_TYPE=Release \
             -DFATP_ECS_BUILD_BENCH=ON \
-            -DFATP_INCLUDE_DIR=${{ github.workspace }}/FatP/include
+            -DFATP_INCLUDE_DIR=${{ github.workspace }}/FatP/include \
+            -DCMAKE_PREFIX_PATH=$HOME/entt-install
 
       - name: Build
         working-directory: fatp-ecs
@@ -76,16 +94,14 @@ jobs:
           FATP_BENCH_WARMUP_RUNS: "${{ inputs.warmup }}"
           FATP_BENCH_NO_STABILIZE: "1"
           FATP_BENCH_NO_SCOPE: "1"
-          FATP_BENCH_OUTPUT_CSV: "bench-results.csv"
         run: ./build/benchmark 2>&1 | tee bench-output.txt
 
       - name: Upload results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bench-fatp-ecs-gcc${{ matrix.version }}
-          path: |
-            fatp-ecs/bench-output.txt
-            fatp-ecs/bench-results.csv
+          path: fatp-ecs/bench-output.txt
 
   # ===========================================================================
   # Linux Clang Benchmarks
@@ -111,12 +127,29 @@ jobs:
           repository: schroedermatthew/FatP
           path: FatP
 
-      - name: Install Clang and EnTT
+      - name: Install Clang and tools
         run: |
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh ${{ matrix.version }}
-          sudo apt-get install -y cmake ninja-build libentt-dev
+          sudo apt-get install -y cmake ninja-build
+
+      - name: Cache EnTT
+        id: cache-entt
+        uses: actions/cache@v4
+        with:
+          path: ~/entt-install
+          key: entt-clang${{ matrix.version }}-v1
+
+      - name: Install EnTT from source
+        if: steps.cache-entt.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch v3.14.0 https://github.com/skypjack/entt.git ~/entt-src
+          cmake -S ~/entt-src -B ~/entt-build \
+            -DCMAKE_CXX_COMPILER=clang++-${{ matrix.version }} \
+            -DCMAKE_INSTALL_PREFIX=$HOME/entt-install \
+            -DENTT_BUILD_TESTING=OFF
+          cmake --install ~/entt-build
 
       - name: Configure (with benchmarks)
         working-directory: fatp-ecs
@@ -125,7 +158,8 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++-${{ matrix.version }} \
             -DCMAKE_BUILD_TYPE=Release \
             -DFATP_ECS_BUILD_BENCH=ON \
-            -DFATP_INCLUDE_DIR=${{ github.workspace }}/FatP/include
+            -DFATP_INCLUDE_DIR=${{ github.workspace }}/FatP/include \
+            -DCMAKE_PREFIX_PATH=$HOME/entt-install
 
       - name: Build
         working-directory: fatp-ecs
@@ -138,16 +172,14 @@ jobs:
           FATP_BENCH_WARMUP_RUNS: "${{ inputs.warmup }}"
           FATP_BENCH_NO_STABILIZE: "1"
           FATP_BENCH_NO_SCOPE: "1"
-          FATP_BENCH_OUTPUT_CSV: "bench-results.csv"
         run: ./build/benchmark 2>&1 | tee bench-output.txt
 
       - name: Upload results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bench-fatp-ecs-clang${{ matrix.version }}
-          path: |
-            fatp-ecs/bench-output.txt
-            fatp-ecs/bench-results.csv
+          path: fatp-ecs/bench-output.txt
 
   # ===========================================================================
   # Windows MSVC Benchmarks
@@ -191,16 +223,14 @@ jobs:
           FATP_BENCH_BATCHES: "${{ inputs.batches }}"
           FATP_BENCH_WARMUP_RUNS: "${{ inputs.warmup }}"
           FATP_BENCH_NO_STABILIZE: "1"
-          FATP_BENCH_OUTPUT_CSV: "bench-results.csv"
         run: .\build\Release\benchmark.exe 2>&1 | Tee-Object -FilePath bench-output.txt
 
       - name: Upload results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bench-fatp-ecs-msvc
-          path: |
-            fatp-ecs/bench-output.txt
-            fatp-ecs/bench-results.csv
+          path: fatp-ecs/bench-output.txt
 
   # ===========================================================================
   # Summary
