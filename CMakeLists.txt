@@ -51,7 +51,7 @@ if(FATP_ECS_BUILD_TESTS)
 
     # Shared warning flags
     if(MSVC)
-        set(FATP_ECS_WARNING_FLAGS /W4 /WX)
+        set(FATP_ECS_WARNING_FLAGS /W4 /WX /Zc:preprocessor)
     else()
         set(FATP_ECS_WARNING_FLAGS -Wall -Wextra -Wpedantic -Werror)
     endif()
