@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        build_type: [Debug, Release]
+        include:
+          - compiler: gcc
+            cc: gcc-14
+            cxx: g++-14
+          - compiler: clang
+            cc: clang-18
+            cxx: clang++-18
+
+    name: Linux / ${{ matrix.compiler }} / ${{ matrix.build_type }}
+
+    steps:
+      - name: Checkout fatp-ecs
+        uses: actions/checkout@v4
+        with:
+          path: fatp-ecs
+
+      - name: Checkout FatP (dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: schroedermatthew/FatP
+          path: FatP
+
+      - name: Install tools
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build
+
+      - name: Configure
+        working-directory: fatp-ecs
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_C_COMPILER=${{ matrix.cc }} \
+            -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DFATP_INCLUDE_DIR=${{ github.workspace }}/FatP/include
+
+      - name: Build
+        working-directory: fatp-ecs
+        run: cmake --build build --parallel
+
+      - name: Test
+        working-directory: fatp-ecs
+        run: ctest --test-dir build --output-on-failure --parallel 4
+
+  windows:
+    runs-on: windows-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Debug, Release]
+
+    name: Windows / MSVC / ${{ matrix.build_type }}
+
+    steps:
+      - name: Checkout fatp-ecs
+        uses: actions/checkout@v4
+        with:
+          path: fatp-ecs
+
+      - name: Checkout FatP (dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: schroedermatthew/FatP
+          path: FatP
+
+      - name: Configure
+        working-directory: fatp-ecs
+        run: |
+          cmake -B build `
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
+            -DFATP_INCLUDE_DIR=${{ github.workspace }}/FatP/include
+
+      - name: Build
+        working-directory: fatp-ecs
+        run: cmake --build build --config ${{ matrix.build_type }} --parallel
+
+      - name: Test
+        working-directory: fatp-ecs
+        run: ctest --test-dir build --config ${{ matrix.build_type }} --output-on-failure --parallel 4
