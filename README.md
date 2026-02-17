@@ -1,18 +1,16 @@
 # FAT-P ECS Framework
 
-A production-quality Entity Component System built entirely on [FAT-P](https://github.com/schroedermatthew/FatP) library components. Proves that 11 FAT-P components compose into a coherent, real-world framework.
+An Entity Component System framework built on [FAT-P](https://github.com/schroedermatthew/FatP), using 19 FAT-P components for real architectural reasons. Header-only, C++20, zero dependencies beyond FAT-P.
+
+[![CI](https://github.com/schroedermatthew/fatp-ecs/actions/workflows/ci.yml/badge.svg)](https://github.com/schroedermatthew/fatp-ecs/actions/workflows/ci.yml)
 
 ## Quick Start
 
 ```cpp
-#include "fatp_ecs/FatpEcs.h"
+#include <fatp_ecs/FatpEcs.h>
 using namespace fatp_ecs;
 
 Registry registry;
-
-// Events
-auto conn = registry.events().onEntityCreated.connect(
-    [](Entity e) { /* ... */ });
 
 // Create entities
 Entity player = registry.create();
@@ -27,10 +25,14 @@ registry.view<Position, Velocity>().each(
         pos.y += vel.dy;
     });
 
+// Lifecycle events
+auto conn = registry.events().onEntityCreated.connect(
+    [](Entity e) { /* ... */ });
+
 // Deferred operations (safe during iteration)
 CommandBuffer cmd;
 registry.view<Health>().each([&](Entity e, Health& hp) {
-    if (hp.current <= 0) cmd.destroy(e);
+    if (hp.hp <= 0) cmd.destroy(e);
 });
 cmd.flush(registry);
 
@@ -41,81 +43,133 @@ scheduler.addSystem("Physics",
     makeComponentMask<Position>(),    // writes
     makeComponentMask<Velocity>());   // reads
 scheduler.run(registry);
+
+// Data-driven spawning from JSON templates
+TemplateRegistry templates;
+templates.registerComponent("Position", myPositionFactory);
+templates.addTemplate("goblin", R"({
+    "components": { "Position": {"x": 0, "y": 0}, "Health": {"current": 50, "max": 50} }
+})");
+Entity goblin = templates.spawn(registry, "goblin");
+
+// Overflow-safe gameplay math
+int hp = applyDamage(currentHp, damage, maxHp);  // clamped to [0, maxHp]
+int score = addScore(currentScore, points);       // saturates at INT_MAX
 ```
+
+## Building
+
+Header-only. Requires C++20 and FAT-P as a sibling directory or via `FATP_INCLUDE_DIR`.
+
+```bash
+cmake -B build -DFATP_INCLUDE_DIR=/path/to/FatP/include
+cmake --build build
+ctest --test-dir build
+```
+
+Or directly:
+
+```bash
+g++ -std=c++20 -O2 -I include -I /path/to/FatP/include your_code.cpp -lpthread
+```
+
+## FAT-P Component Usage
+
+19 FAT-P components integrated with architectural justification:
+
+| FAT-P Component | ECS Role | Phase |
+|---|---|---|
+| **StrongId** | Type-safe Entity handles (64-bit: index + generation) | 1 |
+| **SparseSetWithData** | O(1) component storage with cache-friendly dense iteration | 1 |
+| **SlotMap** | Entity allocator with generational ABA safety | 1 |
+| **FastHashMap** | Type-erased component store registry | 1 |
+| **SmallVector** | Stack-allocated entity query results | 1 |
+| **Signal** | Observer pattern for entity/component lifecycle events | 2 |
+| **ThreadPool** | Work-stealing parallel system execution | 2 |
+| **BitSet** | Component masks for archetype matching and dependency analysis | 2 |
+| **WorkQueue** | Job dispatch (via ThreadPool internals) | 2 |
+| **ObjectPool** | Per-frame temporary allocator with bulk reset | 3 |
+| **StringPool** | Interned entity names for pointer-equality comparison | 3 |
+| **FlatMap** | Sorted name-to-entity mapping for debug/editor tools | 3 |
+| **JsonLite** | Data-driven entity template definitions | 3 |
+| **StateMachine** | Compile-time AI state machines with context binding | 3 |
+| **FeatureManager** | Runtime system enable/disable toggles | 3 |
+| **CheckedArithmetic** | Overflow-safe health/damage/score calculations | 3 |
+| **AlignedVector** | SIMD-friendly aligned component storage | 3 |
+| **LockFreeQueue** | Thread-safe parallel command buffer | 2 |
+| **CircularBuffer** | Available for deferred command queues | — |
 
 ## Architecture
 
-### Phase 1 — Core ECS
-| FAT-P Component | ECS Role |
-|---|---|
-| **StrongId** | Type-safe Entity handles (64-bit: index + generation) |
-| **SparseSetWithData** | O(1) component storage with cache-friendly dense iteration |
-| **SlotMap** | Entity allocator with generational ABA safety |
-| **FastHashMap** | Type-erased component store registry |
-| **SmallVector** | Stack-allocated entity query results |
+**Entity** is a 64-bit StrongId. Lower 32 bits are the slot index, upper 32 are the generation counter. This enables O(1) ABA-safe entity validation via the SlotMap allocator.
 
-### Phase 2 — Events, Parallelism, Deferred Operations
-| FAT-P Component | ECS Role |
-|---|---|
-| **Signal** | Observer pattern for entity/component lifecycle events |
-| **ThreadPool** | Work-stealing parallel system execution |
-| **BitSet** | Component masks for fast archetype matching and dependency analysis |
-| **LockFreeQueue** | Thread-safe MPMC command buffer (via ParallelCommandBuffer) |
-| **SparseSet::indexOf()** | Keeps parallel entity vectors in sync for generational safety |
+**ComponentStore\<T\>** wraps SparseSetWithData with an EntityIndex policy that extracts the 32-bit slot index for sparse array indexing while storing full 64-bit entities in the dense array.
 
-Plus **WorkQueue** and **CircularBuffer** available for Phase 3 integration.
+**View\<Ts...\>** iterates the intersection of component stores. Compile-time pivot dispatch selects the smallest store as the iteration driver, probing the others with O(1) `has()`.
 
-### Key Design Decisions
+**EventBus** provides Signal-based lifecycle events (onEntityCreated, onEntityDestroyed, onComponentAdded\<T\>, onComponentRemoved\<T\>). Lazy signal creation means no overhead for unobserved component types.
 
-**Entity = 64-bit StrongId**: Lower 32 bits are the slot index, upper 32 are the generation counter. This enables O(1) ABA-safe entity validation.
+**Scheduler** analyzes system read/write ComponentMasks via BitSet intersection to identify non-conflicting systems and runs them in parallel on the ThreadPool.
 
-**ComponentStore parallel entity vector**: SparseSet stores `uint32_t` indices in its dense array (losing generation info). ComponentStore maintains a parallel `std::vector<Entity>` with full 64-bit entities, kept in sync via `SparseSet::indexOf()` during swap-with-back erasure. Views read from this vector to yield correct generational Entity handles.
+**CommandBuffer** records structural mutations during iteration. Flush applies them atomically between frames. ParallelCommandBuffer adds mutex protection for multi-threaded systems.
 
-**Signal-based EventBus**: Lazy signal creation — no overhead for component types nobody listens to. ScopedConnection for automatic RAII cleanup.
+**FrameAllocator** wraps ObjectPool for per-frame temporary allocations (collision pairs, spatial query results) with O(1) acquire and bulk releaseAll().
 
-**Scheduler dependency analysis**: Systems declare read/write ComponentMasks. Scheduler uses BitSet intersection to identify non-conflicting systems and runs them in parallel on the ThreadPool.
+**EntityNames** provides bidirectional name-to-entity mapping with StringPool interning and FlatMap sorted iteration.
 
-**CommandBuffer pattern**: Systems record structural mutations (create/destroy/add/remove) during iteration. Mutations are applied atomically between frames via `flush()`. ParallelCommandBuffer adds thread-safety for multi-threaded systems.
+**TemplateRegistry** parses JSON entity definitions via JsonLite and stamps out entities through registered ComponentFactory callbacks.
+
+**SystemToggle** wraps FeatureManager for runtime system enable/disable without recompilation.
+
+**SafeMath** provides clamped arithmetic via CheckedArithmetic with gameplay helpers (applyDamage, applyHealing, addScore) that saturate instead of overflowing.
 
 ## Files
 
 ```
 include/fatp_ecs/
-├── Entity.h              — StrongId-based entity type
+├── Entity.h              — StrongId-based entity type + EntityIndex policy
+├── TypeId.h              — Atomic compile-time type-to-integer mapping
+├── ComponentMask.h       — BitSet wrapper for archetype matching
 ├── ComponentStore.h      — SparseSetWithData wrapper with entity tracking
-├── ComponentMask.h       — BitSet-based component type masks
 ├── EventBus.h            — Signal-based lifecycle events
 ├── Registry.h            — Central coordinator (SlotMap + FastHashMap)
-├── View.h                — Single/multi-component iteration
+├── View.h                — Multi-component iteration with pivot dispatch
 ├── CommandBuffer.h       — Deferred operations (single + parallel)
 ├── CommandBuffer_Impl.h  — Registry-dependent implementations
-├── Scheduler.h           — ThreadPool-based system execution
+├── Scheduler.h           — ThreadPool-based parallel system execution
+├── FrameAllocator.h      — ObjectPool-backed per-frame temp allocator
+├── EntityNames.h         — StringPool + FlatMap entity naming
+├── EntityTemplate.h      — JsonLite-driven entity spawning
+├── EntityTemplate_Impl.h — Registry-dependent template implementations
+├── SystemToggle.h        — FeatureManager-backed system toggles
+├── SafeMath.h            — CheckedArithmetic gameplay math
 └── FatpEcs.h             — Umbrella header
 
 tests/
-├── test_ecs.cpp          — Phase 1 tests (27 tests)
-└── test_ecs_phase2.cpp   — Phase 2 tests (37 tests)
-```
-
-## Building
-
-Header-only. Just add the include paths:
-
-```bash
-g++ -std=c++20 -O2 -I include -I /path/to/FatP/include \
-    your_code.cpp -lpthread
+├── test_ecs.cpp          — Phase 1: Core ECS (27 tests)
+├── test_ecs_phase2.cpp   — Phase 2: Events & Parallelism (37 tests)
+└── test_ecs_phase3.cpp   — Phase 3: Gameplay Infrastructure (28 tests)
 ```
 
 ## Test Results
 
+92 tests across 3 phases, passing on GCC-14, Clang-18, and MSVC 19.44 in both Debug and Release configurations.
+
 ```
-Phase 1: 27/27 passed ✓
-Phase 2: 37/37 passed ✓
-Total:   64/64 passed ✓
+Phase 1 — Core ECS:              27 passed
+Phase 2 — Events & Parallelism:  37 passed
+Phase 3 — Gameplay Infrastructure: 28 passed
+Total:                            92 passed
 ```
 
-Compiled clean with `-Wall -Wextra -Wpedantic -Werror`.
+## CI
 
-## SparseSet Modification
+GitHub Actions runs a 6-configuration matrix on every push:
 
-Phase 2 exposed a real limitation: `SparseSetWithData::dense()` returns `uint32_t` indices, losing the Entity generation. The fix was adding `indexOf(T value)` to both `SparseSet` and `SparseSetWithData` — a 30-line non-breaking addition that exposes the sparse→dense mapping for callers maintaining parallel arrays.
+| Compiler | Debug | Release |
+|---|---|---|
+| GCC 14 (Ubuntu 24.04) | Pass | Pass |
+| Clang 18 (Ubuntu 24.04) | Pass | Pass |
+| MSVC 19.44 (Windows Server 2022) | Pass | Pass |
+
+All configurations compile clean with `-Wall -Wextra -Wpedantic -Werror` (GCC/Clang) and `/W4 /WX /Zc:preprocessor` (MSVC).
