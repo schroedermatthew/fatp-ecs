@@ -9,6 +9,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # ==============================================================================
+# Warning Flags (shared by tests and demo)
+# ==============================================================================
+if(MSVC)
+    set(FATP_ECS_WARNING_FLAGS /W4 /WX /Zc:preprocessor)
+else()
+    set(FATP_ECS_WARNING_FLAGS -Wall -Wextra -Wpedantic -Werror)
+endif()
+
+# ==============================================================================
 # FAT-P Dependency
 # ==============================================================================
 # FAT-P is header-only. We create an interface library pointing to its include dir.
@@ -54,13 +63,6 @@ option(FATP_ECS_BUILD_TESTS "Build ECS tests" ON)
 if(FATP_ECS_BUILD_TESTS)
     enable_testing()
 
-    # Shared warning flags
-    if(MSVC)
-        set(FATP_ECS_WARNING_FLAGS /W4 /WX /Zc:preprocessor)
-    else()
-        set(FATP_ECS_WARNING_FLAGS -Wall -Wextra -Wpedantic -Werror)
-    endif()
-
     # Phase 1 tests
     add_executable(test_ecs tests/test_ecs.cpp)
     target_link_libraries(test_ecs PRIVATE fatp_ecs)
@@ -78,4 +80,19 @@ if(FATP_ECS_BUILD_TESTS)
     target_link_libraries(test_ecs_phase3 PRIVATE fatp_ecs)
     target_compile_options(test_ecs_phase3 PRIVATE ${FATP_ECS_WARNING_FLAGS})
     add_test(NAME test_ecs_phase3 COMMAND test_ecs_phase3)
+endif()
+
+# ==============================================================================
+# Demo Application (Phase 4)
+# ==============================================================================
+option(FATP_ECS_BUILD_DEMO "Build Phase 4 demo application" ON)
+
+if(FATP_ECS_BUILD_DEMO)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/demo/main.cpp")
+        add_executable(demo demo/main.cpp)
+        target_link_libraries(demo PRIVATE fatp_ecs)
+        target_compile_options(demo PRIVATE ${FATP_ECS_WARNING_FLAGS})
+    else()
+        message(STATUS "Demo source not found (demo/main.cpp) -- skipping demo target")
+    endif()
 endif()
