@@ -276,6 +276,35 @@ static void test_nontrivial_component()
     TEST_ASSERT(reg.get<Label>(src).text == "hello", "src string unchanged");
 }
 
+static void test_noncopyable_component_skipped()
+{
+    // AIComponent-style: has deleted copy assignment (e.g. holds unique_ptr).
+    // registry.copy() must compile and return 0 for the non-copyable component
+    // rather than failing to compile or crashing.
+    struct NonCopyable
+    {
+        NonCopyable() = default;
+        NonCopyable(const NonCopyable&) = delete;
+        NonCopyable& operator=(const NonCopyable&) = delete;
+        NonCopyable(NonCopyable&&) = default;
+        NonCopyable& operator=(NonCopyable&&) = default;
+    };
+
+    Registry reg;
+    Entity src = reg.create();
+    Entity dst = reg.create();
+
+    reg.add<NonCopyable>(src);
+    reg.add<Health>(src, 99u);
+
+    std::size_t n = reg.copy(src, dst);
+
+    TEST_ASSERT(n == 1,                    "only copyable components counted");
+    TEST_ASSERT(reg.has<Health>(dst),      "Health was copied");
+    TEST_ASSERT(!reg.has<NonCopyable>(dst),"NonCopyable was skipped");
+}
+
+
 // =============================================================================
 // main
 // =============================================================================
@@ -299,6 +328,7 @@ int main()
     RUN_TEST(test_modify_dst_does_not_affect_src);
     RUN_TEST(test_no_components_returns_zero);
     RUN_TEST(test_nontrivial_component);
+    RUN_TEST(test_noncopyable_component_skipped);
 
     std::printf("\n%d/%d tests passed\n", sTestsPassed, sTestsPassed + sTestsFailed);
     return sTestsFailed == 0 ? 0 : 1;

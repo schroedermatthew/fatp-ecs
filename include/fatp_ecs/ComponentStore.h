@@ -144,28 +144,40 @@ public:
 
     bool copyTo(Entity src, Entity dst, EventBus& events) override
     {
-        const T* srcComp = mStorage.tryGet(src);
-        if (srcComp == nullptr)
+        // Non-copyable component types cannot be duplicated via copy().
+        // Return false rather than failing to compile — the caller skips
+        // non-copyable components silently. Use registry.copy() only on
+        // entities whose components are all copy-assignable.
+        if constexpr (!std::is_copy_assignable_v<T> || !std::is_copy_constructible_v<T>)
         {
+            (void)src; (void)dst; (void)events;
             return false;
-        }
-
-        // If dst already has the component, overwrite in-place (no re-insert).
-        T* dstComp = mStorage.tryGet(dst);
-        if (dstComp != nullptr)
-        {
-            *dstComp = *srcComp;
-            events.emitComponentUpdated<T>(dst, *dstComp);
         }
         else
         {
-            T* inserted = mStorage.tryEmplace(dst, *srcComp);
-            if (inserted != nullptr)
+            const T* srcComp = mStorage.tryGet(src);
+            if (srcComp == nullptr)
             {
-                events.emitComponentAdded<T>(dst, *inserted);
+                return false;
             }
+
+            // If dst already has the component, overwrite in-place (no re-insert).
+            T* dstComp = mStorage.tryGet(dst);
+            if (dstComp != nullptr)
+            {
+                *dstComp = *srcComp;
+                events.emitComponentUpdated<T>(dst, *dstComp);
+            }
+            else
+            {
+                T* inserted = mStorage.tryEmplace(dst, *srcComp);
+                if (inserted != nullptr)
+                {
+                    events.emitComponentAdded<T>(dst, *inserted);
+                }
+            }
+            return true;
         }
-        return true;
     }
 
     // =========================================================================
