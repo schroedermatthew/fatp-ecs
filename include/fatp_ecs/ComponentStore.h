@@ -144,11 +144,10 @@ public:
 
     bool copyTo(Entity src, Entity dst, EventBus& events) override
     {
-        // Non-copyable component types cannot be duplicated via copy().
-        // Return false rather than failing to compile — the caller skips
-        // non-copyable components silently. Use registry.copy() only on
-        // entities whose components are all copy-assignable.
-        if constexpr (!std::is_copy_assignable_v<T> || !std::is_copy_constructible_v<T>)
+        // Non-copyable component types (e.g. those holding unique_ptr) cannot
+        // be duplicated. Return false so registry.copy() silently skips them
+        // rather than failing to compile at the call site.
+        if constexpr (!std::copyable<T>)
         {
             (void)src; (void)dst; (void)events;
             return false;
