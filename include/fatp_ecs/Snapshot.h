@@ -154,7 +154,7 @@ public:
     RegistrySnapshot(const RegistrySnapshot&) = delete;
     RegistrySnapshot& operator=(const RegistrySnapshot&) = delete;
     RegistrySnapshot(RegistrySnapshot&&) = default;
-    RegistrySnapshot& operator=(RegistrySnapshot&&) = default;
+    RegistrySnapshot& operator=(RegistrySnapshot&&) = delete;
 
     /**
      * @brief Serialize all instances of component T.
@@ -247,7 +247,7 @@ public:
     RegistrySnapshotLoader(const RegistrySnapshotLoader&) = delete;
     RegistrySnapshotLoader& operator=(const RegistrySnapshotLoader&) = delete;
     RegistrySnapshotLoader(RegistrySnapshotLoader&&) = default;
-    RegistrySnapshotLoader& operator=(RegistrySnapshotLoader&&) = default;
+    RegistrySnapshotLoader& operator=(RegistrySnapshotLoader&&) = delete;
 
     /**
      * @brief Read and restore one component block.
