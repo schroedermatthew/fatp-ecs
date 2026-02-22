@@ -145,14 +145,15 @@ struct ConcurrentStoragePolicy
 
             // Structural mutations — called only from the single-threaded
             // Registry add/remove paths (exclusive access implied).
-            void push_back(T&& v)        { auto g = mLock.lock(); mData.push_back(std::move(v)); }
-            void push_back(const T& v)   { auto g = mLock.lock(); mData.push_back(v); }
-            void pop_back()              { auto g = mLock.lock(); mData.pop_back(); }
+            // [[maybe_unused]]: RAII guards are held for their destructor side-effect.
+            void push_back(T&& v)        { [[maybe_unused]] auto g = mLock.lock(); mData.push_back(std::move(v)); }
+            void push_back(const T& v)   { [[maybe_unused]] auto g = mLock.lock(); mData.push_back(v); }
+            void pop_back()              { [[maybe_unused]] auto g = mLock.lock(); mData.pop_back(); }
 
             // Mutable read — exclusive (caller may write through the ref)
-            T& operator[](std::size_t i)       { auto g = mLock.lock(); return mData[i]; }
+            T& operator[](std::size_t i)       { [[maybe_unused]] auto g = mLock.lock(); return mData[i]; }
             // Const read — shared
-            const T& operator[](std::size_t i) const { auto g = mLock.lock_shared(); return mData[i]; }
+            const T& operator[](std::size_t i) const { [[maybe_unused]] auto g = mLock.lock_shared(); return mData[i]; }
 
             // Raw pointer access — caller manages lifetime / external locking
             T*       data() noexcept       { return mData.data(); }

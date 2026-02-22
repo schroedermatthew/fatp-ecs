@@ -138,6 +138,13 @@ if(FATP_ECS_BUILD_TESTS)
     target_link_libraries(test_process_scheduler PRIVATE fatp_ecs)
     target_compile_options(test_process_scheduler PRIVATE ${FATP_ECS_WARNING_FLAGS})
     add_test(NAME test_process_scheduler COMMAND test_process_scheduler)
+
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_storage_policy.cpp")
+        add_executable(test_storage_policy tests/test_storage_policy.cpp)
+        target_link_libraries(test_storage_policy PRIVATE fatp_ecs)
+        target_compile_options(test_storage_policy PRIVATE ${FATP_ECS_WARNING_FLAGS})
+        add_test(NAME test_storage_policy COMMAND test_storage_policy)
+    endif()
 endif()
 
 # ==============================================================================

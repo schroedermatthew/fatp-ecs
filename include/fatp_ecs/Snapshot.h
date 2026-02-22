@@ -170,7 +170,7 @@ public:
         const TypeId tid = typeId<T>();
         enc.writeUint32(static_cast<uint32_t>(tid));
 
-        const ComponentStore<T>* store = mRegistry.template tryGetStore<T>();
+        const TypedIComponentStore<T>* store = mRegistry.template tryGetStore<T>();
         if (store == nullptr || store->empty())
         {
             enc.writeUint32(0u);
