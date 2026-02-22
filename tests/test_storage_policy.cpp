@@ -57,8 +57,16 @@ struct Position   { float x{}, y{}, z{}; };
 struct Velocity   { float vx{}, vy{}; };
 struct Health     { uint32_t hp{}; };
 
-// Aligned struct that benefits from 32-byte alignment
+// Aligned struct that benefits from 32-byte alignment.
+// MSVC C4324: structure padded due to alignment specifier — expected and intentional.
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4324)
+#endif
 struct alignas(32) SimdVec4 { float v[4]{}; };
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 // =============================================================================
 // DefaultStoragePolicy — baseline correctness
