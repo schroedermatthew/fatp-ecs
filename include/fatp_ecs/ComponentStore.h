@@ -55,6 +55,12 @@ public:
     /// @brief Number of entries in the dense entity array (== size()).
     [[nodiscard]] virtual std::size_t denseEntityCount() const noexcept = 0;
 
+    /// @brief Copy the component from src to dst if src has it.
+    ///        If dst already has the component it is replaced.
+    ///        Fires onComponentAdded via events if the component is newly added.
+    ///        Returns false if src does not have the component.
+    virtual bool copyTo(Entity src, Entity dst, EventBus& events) = 0;
+
     IComponentStore() = default;
     IComponentStore(const IComponentStore&) = delete;
     IComponentStore& operator=(const IComponentStore&) = delete;
@@ -134,6 +140,32 @@ public:
     [[nodiscard]] std::size_t denseEntityCount() const noexcept override
     {
         return mStorage.dense().size();
+    }
+
+    bool copyTo(Entity src, Entity dst, EventBus& events) override
+    {
+        const T* srcComp = mStorage.tryGet(src);
+        if (srcComp == nullptr)
+        {
+            return false;
+        }
+
+        // If dst already has the component, overwrite in-place (no re-insert).
+        T* dstComp = mStorage.tryGet(dst);
+        if (dstComp != nullptr)
+        {
+            *dstComp = *srcComp;
+            events.emitComponentUpdated<T>(dst, *dstComp);
+        }
+        else
+        {
+            T* inserted = mStorage.tryEmplace(dst, *srcComp);
+            if (inserted != nullptr)
+            {
+                events.emitComponentAdded<T>(dst, *inserted);
+            }
+        }
+        return true;
     }
 
     // =========================================================================

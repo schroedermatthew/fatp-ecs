@@ -41,9 +41,11 @@
 namespace fatp_ecs
 {
 
-// Forward declarations for snapshot types — implementations in Snapshot_Impl.h
+// Forward declarations — implementations in respective _Impl.h files
 class RegistrySnapshot;
 class RegistrySnapshotLoader;
+class Handle;
+class ConstHandle;
 
 // =============================================================================
 // Registry
@@ -628,6 +630,45 @@ public:
     }
 
     // =========================================================================
+    // Entity copy
+    // =========================================================================
+
+    /**
+     * @brief Copy all components from src to dst within this registry.
+     *
+     * For each component store that contains src, the component value is
+     * copied to dst. If dst already has the component it is overwritten in-place
+     * and onComponentUpdated fires. If dst does not have it, it is added and
+     * onComponentAdded fires.
+     *
+     * src and dst must both be alive. Copying an entity to itself is a no-op
+     * (the copy-into-self path is detected and skipped per-store).
+     *
+     * @return Number of components copied. 0 if src has no components or is not alive.
+     *
+     * @note For cross-registry copy, use Snapshot/SnapshotLoader or manually
+     *       iterate allEntities() + component accessors.
+     * @note Thread-safety: NOT thread-safe.
+     */
+    std::size_t copy(Entity src, Entity dst)
+    {
+        if (src == dst || !isAlive(src) || !isAlive(dst))
+        {
+            return 0;
+        }
+
+        std::size_t count = 0;
+        for (auto it = mStores.begin(); it != mStores.end(); ++it)
+        {
+            if (it.value()->copyTo(src, dst, mEvents))
+            {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+        // =========================================================================
     // Snapshot / Serialization
     // =========================================================================
 
@@ -672,6 +713,28 @@ public:
     {
         return getStore<T>();
     }
+
+    // =========================================================================
+    // Handle factories
+    // =========================================================================
+
+    /**
+     * @brief Create a mutable handle to an existing entity.
+     *
+     * The handle is a lightweight (Registry*, Entity) pair. It does not own
+     * the entity — the entity must be destroyed explicitly via handle.destroy()
+     * or registry.destroy(entity).
+     *
+     * @note Defined in EntityHandle_Impl.h (included from FatpEcs.h).
+     */
+    [[nodiscard]] Handle handle(Entity entity) noexcept;
+
+    /**
+     * @brief Create a read-only handle to an existing entity.
+     *
+     * @note Defined in EntityHandle_Impl.h (included from FatpEcs.h).
+     */
+    [[nodiscard]] ConstHandle constHandle(Entity entity) const noexcept;
 
 private:
     // =========================================================================

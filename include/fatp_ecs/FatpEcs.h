@@ -32,8 +32,15 @@
 #include "SystemToggle.h"
 #include "SafeMath.h"
 
+// Entity handle (Phase 4)
+#include "EntityHandle.h"
+#include "EntityHandle_Impl.h"
+
 // Snapshot / serialization (Phase 4)
 #include "Snapshot.h"
+
+// Process scheduler (Phase 4)
+#include "ProcessScheduler.h"
 // Note: Snapshot_Impl.h is included at the bottom of Snapshot.h, which is the
 // correct include point — Registry is fully defined by the time Snapshot.h is
 // reached here, so Snapshot_Impl.h can define the out-of-line methods.

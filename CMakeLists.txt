@@ -123,6 +123,21 @@ if(FATP_ECS_BUILD_TESTS)
     target_link_libraries(test_snapshot PRIVATE fatp_ecs)
     target_compile_options(test_snapshot PRIVATE ${FATP_ECS_WARNING_FLAGS})
     add_test(NAME test_snapshot COMMAND test_snapshot)
+
+    add_executable(test_handle tests/test_handle.cpp)
+    target_link_libraries(test_handle PRIVATE fatp_ecs)
+    target_compile_options(test_handle PRIVATE ${FATP_ECS_WARNING_FLAGS})
+    add_test(NAME test_handle COMMAND test_handle)
+
+    add_executable(test_entity_copy tests/test_entity_copy.cpp)
+    target_link_libraries(test_entity_copy PRIVATE fatp_ecs)
+    target_compile_options(test_entity_copy PRIVATE ${FATP_ECS_WARNING_FLAGS})
+    add_test(NAME test_entity_copy COMMAND test_entity_copy)
+
+    add_executable(test_process_scheduler tests/test_process_scheduler.cpp)
+    target_link_libraries(test_process_scheduler PRIVATE fatp_ecs)
+    target_compile_options(test_process_scheduler PRIVATE ${FATP_ECS_WARNING_FLAGS})
+    add_test(NAME test_process_scheduler COMMAND test_process_scheduler)
 endif()
 
 # ==============================================================================
