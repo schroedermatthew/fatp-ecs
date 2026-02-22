@@ -35,6 +35,7 @@
 #include "Observer.h"
 #include "OwningGroup.h"
 #include "RuntimeView.h"
+#include "StoragePolicy.h"
 #include "TypeId.h"
 #include "View.h"
 
@@ -147,10 +148,10 @@ public:
         //
         // Contract preserved: if entity already has T, the existing component
         // is returned unchanged and no event is fired.
-        T* inserted = store->emplace(entity, std::forward<Args>(args)...);
+        T* inserted = store->emplaceComponent(entity, std::forward<Args>(args)...);
         if (inserted == nullptr)
         {
-            return *store->tryGet(entity);
+            return *store->tryGetComponent(entity);
         }
 
         mEvents.emitComponentAdded<T>(entity, *inserted);
@@ -207,7 +208,7 @@ public:
             return false;
         }
 
-        T* component = store->tryGet(entity);
+        T* component = store->tryGetComponent(entity);
         if (component == nullptr)
         {
             return false;
@@ -244,7 +245,7 @@ public:
             return false;
         }
 
-        T* component = store->tryGet(entity);
+        T* component = store->tryGetComponent(entity);
         if (component == nullptr)
         {
             return false;
@@ -273,7 +274,7 @@ public:
         {
             throw std::out_of_range("Registry::get: component type not registered");
         }
-        return store->get(entity);
+        return store->getComponent(entity);
     }
 
     template <typename T>
@@ -284,7 +285,7 @@ public:
         {
             throw std::out_of_range("Registry::get: component type not registered");
         }
-        return store->get(entity);
+        return store->getComponent(entity);
     }
 
     template <typename T>
@@ -295,7 +296,7 @@ public:
         {
             return nullptr;
         }
-        return store->tryGet(entity);
+        return store->tryGetComponent(entity);
     }
 
     template <typename T>
@@ -306,7 +307,7 @@ public:
         {
             return nullptr;
         }
-        return store->tryGet(entity);
+        return store->tryGetComponent(entity);
     }
 
     // =========================================================================
@@ -709,9 +710,70 @@ public:
      * Returns nullptr if no entity has ever had component T.
      */
     template <typename T>
-    [[nodiscard]] const ComponentStore<T>* tryGetStore() const
+    [[nodiscard]] const TypedIComponentStore<T>* tryGetStore() const
     {
         return getStore<T>();
+    }
+
+    // =========================================================================
+    // Storage policy registration
+    // =========================================================================
+
+    /**
+     * @brief Pre-create the component store for T using a custom storage policy.
+     *
+     * Must be called BEFORE any entity has component T. If the store already
+     * exists (because add<T>() was called first), this call asserts in debug
+     * and is a no-op in release — the default-policy store continues to be used.
+     *
+     * @tparam T      Component type.
+     * @tparam Policy Storage policy template (e.g. AlignedStoragePolicy<64>::type).
+     *
+     * @code
+     * // 64-byte aligned storage for SIMD processing:
+     * registry.useStorage<Transform, AlignedStoragePolicy<64>::type>();
+     *
+     * // Thread-safe shared-read storage:
+     * registry.useStorage<Health, ConcurrentStoragePolicy<fat_p::SharedMutexPolicy>::type>();
+     * @endcode
+     */
+    template <typename T, template <typename> class Policy>
+        requires StoragePolicy<Policy>
+    void useStorage()
+    {
+        const TypeId tid = typeId<T>();
+
+        assert(mStores.find(tid) == nullptr &&
+               "useStorage<T, Policy>() called after component T was already added. "
+               "Call useStorage() before the first add<T>().");
+
+        auto store = std::make_unique<ComponentStore<T, Policy>>();
+        auto* raw = store.get();
+        mStores.insert(tid, std::move(store));
+
+        if (tid < kStoreCacheSize)
+        {
+            mStoreCache[tid] = raw;
+        }
+    }
+
+    /**
+     * @brief Pre-create an aligned storage store for T.
+     *
+     * Convenience wrapper for the common case of SIMD/cache-line alignment.
+     *
+     * @tparam T         Component type.
+     * @tparam Alignment Byte alignment (must be power of two, >= alignof(T)).
+     *
+     * @code
+     * registry.useAlignedStorage<Transform, 64>();   // cache-line aligned
+     * registry.useAlignedStorage<Velocity, 32>();    // AVX2
+     * @endcode
+     */
+    template <typename T, std::size_t Alignment>
+    void useAlignedStorage()
+    {
+        useStorage<T, AlignedStoragePolicy<Alignment>::template Policy>();
     }
 
     // =========================================================================
@@ -742,20 +804,20 @@ private:
     // =========================================================================
 
     template <typename T>
-    ComponentStore<T>* ensureStore()
+    TypedIComponentStore<T>* ensureStore()
     {
         const TypeId tid = typeId<T>();
 
         // Fast path: check flat cache first
         if (tid < kStoreCacheSize && mStoreCache[tid] != nullptr)
         {
-            return static_cast<ComponentStore<T>*>(mStoreCache[tid]);
+            return static_cast<TypedIComponentStore<T>*>(mStoreCache[tid]);
         }
 
         auto* existing = mStores.find(tid);
         if (existing != nullptr)
         {
-            auto* raw = static_cast<ComponentStore<T>*>(existing->get());
+            auto* raw = static_cast<TypedIComponentStore<T>*>(existing->get());
             if (tid < kStoreCacheSize)
             {
                 mStoreCache[tid] = raw;
@@ -764,7 +826,7 @@ private:
         }
 
         auto store = std::make_unique<ComponentStore<T>>();
-        auto* raw = store.get();
+        auto* raw = static_cast<TypedIComponentStore<T>*>(store.get());
         mStores.insert(tid, std::move(store));
 
         if (tid < kStoreCacheSize)
@@ -775,14 +837,14 @@ private:
     }
 
     template <typename T>
-    ComponentStore<T>* getStore()
+    TypedIComponentStore<T>* getStore()
     {
         const TypeId tid = typeId<T>();
 
         // Fast path: flat cache
         if (tid < kStoreCacheSize && mStoreCache[tid] != nullptr)
         {
-            return static_cast<ComponentStore<T>*>(mStoreCache[tid]);
+            return static_cast<TypedIComponentStore<T>*>(mStoreCache[tid]);
         }
 
         auto* val = mStores.find(tid);
@@ -790,7 +852,7 @@ private:
         {
             return nullptr;
         }
-        auto* raw = static_cast<ComponentStore<T>*>(val->get());
+        auto* raw = static_cast<TypedIComponentStore<T>*>(val->get());
         if (tid < kStoreCacheSize)
         {
             mStoreCache[tid] = raw;
@@ -799,14 +861,13 @@ private:
     }
 
     template <typename T>
-    const ComponentStore<T>* getStore() const
+    const TypedIComponentStore<T>* getStore() const
     {
         const TypeId tid = typeId<T>();
 
-        // Fast path: flat cache (const access)
         if (tid < kStoreCacheSize && mStoreCache[tid] != nullptr)
         {
-            return static_cast<const ComponentStore<T>*>(mStoreCache[tid]);
+            return static_cast<const TypedIComponentStore<T>*>(mStoreCache[tid]);
         }
 
         const auto* val = mStores.find(tid);
@@ -814,11 +875,11 @@ private:
         {
             return nullptr;
         }
-        return static_cast<const ComponentStore<T>*>(val->get());
+        return static_cast<const TypedIComponentStore<T>*>(val->get());
     }
 
     template <typename T>
-    ComponentStore<T>* getOrNullStore()
+    TypedIComponentStore<T>* getOrNullStore()
     {
         return getStore<T>();
     }
@@ -840,7 +901,7 @@ private:
      * selection sort would incur.
      */
     template <typename T, typename Comparator>
-    static void sortStore(ComponentStore<T>& store, Comparator&& comparator)
+    static void sortStore(TypedIComponentStore<T>& store, Comparator&& comparator)
     {
         const std::size_t n = store.size();
 
@@ -897,8 +958,8 @@ private:
      * Total swaps: at most min(|A|, |B|) — linear.
      */
     template <typename A, typename B>
-    static void sortStoreToMatch(ComponentStore<A>& pivotStore,
-                                 ComponentStore<B>& followStore)
+    static void sortStoreToMatch(TypedIComponentStore<A>& pivotStore,
+                                 TypedIComponentStore<B>& followStore)
     {
         std::size_t nextPos = 0; // next slot to fill in followStore
 

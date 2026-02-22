@@ -102,7 +102,7 @@ public:
     // Construction (called by Registry::group<Ts...>())
     // =========================================================================
 
-    explicit OwningGroup(ComponentStore<Ts>*... stores, EventBus& events)
+    explicit OwningGroup(TypedIComponentStore<Ts>*... stores, EventBus& events)
         : mStores(stores...)
         , mGroupSize(0)
     {
@@ -178,7 +178,7 @@ public:
     }
 
 private:
-    std::tuple<ComponentStore<Ts>*...> mStores;
+    std::tuple<TypedIComponentStore<Ts>*...> mStores;
     std::size_t mGroupSize{0};
     std::vector<fat_p::ScopedConnection> mConnections;
 

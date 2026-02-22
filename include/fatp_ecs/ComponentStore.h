@@ -2,36 +2,50 @@
 
 /**
  * @file ComponentStore.h
- * @brief Type-erased component storage backed by SparseSetWithData.
+ * @brief Type-erased component storage with pluggable storage policies.
+ *
+ * Three-layer type hierarchy:
+ *
+ *   IComponentStore              — fully type-erased (Registry map values)
+ *   TypedIComponentStore<T>      — T-typed virtual interface (Registry typed ops)
+ *   ComponentStore<T, Policy>    — concrete storage (direct View iteration)
+ *
+ * Registry holds IComponentStore* in its maps. Typed operations (add, get,
+ * tryGet, emplace) go through TypedIComponentStore<T>* — one virtual call,
+ * zero UB. View iteration pre-caches raw pointers from ComponentStore<T,P>*
+ * via TypedIComponentStore<T>::typedStorePtr() — a single virtual call to
+ * retrieve the concrete pointer, then all hot-loop iterations are unchecked
+ * raw-pointer ops with no further virtual dispatch.
+ *
+ * Default policy (DefaultStoragePolicy) uses std::vector<T> — identical
+ * behaviour and binary layout to the previous implementation. All existing
+ * call sites work unchanged.
+ *
+ * FAT-P headers used:
+ *   StoragePolicy.h — policy concept and built-in policies
  */
 
-// FAT-P components used:
-// - SparseSetWithData: Per-component-type storage with O(1) add/remove/get
-//   - EntityIndex policy: Keys on full 64-bit Entity, indexes sparse array
-//     by the 32-bit slot index. The dense array stores full Entity values,
-//     eliminating the need for a parallel entity vector.
-//   - tryEmplace(): Returns pointer to inserted data, avoiding the
-//     double-lookup of emplace() + tryGet().
-
+#include <algorithm>
+#include <cassert>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
-#include <fat_p/SparseSet.h>
-
 #include "Entity.h"
 #include "EventBus.h"
+#include "StoragePolicy.h"
 
 namespace fatp_ecs
 {
-// (EventBus is fully defined via the include above)
 
 // =============================================================================
-// IComponentStore - Type-Erased Interface
+// IComponentStore — Fully type-erased interface
 // =============================================================================
 
-/// @brief Abstract interface for type-erased component storage.
 class IComponentStore
 {
 public:
@@ -39,26 +53,15 @@ public:
 
     [[nodiscard]] virtual bool has(Entity entity) const noexcept = 0;
     virtual bool remove(Entity entity) = 0;
-
-    /// @brief Remove entity and fire onComponentRemoved signal via the EventBus.
-    ///        Used by Registry::destroy() so groups and observers are notified.
     virtual bool removeAndNotify(Entity entity, EventBus& events) = 0;
 
     [[nodiscard]] virtual std::size_t size() const noexcept = 0;
     [[nodiscard]] virtual bool empty() const noexcept = 0;
     virtual void clear() = 0;
 
-    /// @brief Pointer to the dense entity array. Used by RuntimeView to iterate
-    ///        the pivot store without knowing the component type.
     [[nodiscard]] virtual const Entity* denseEntities() const noexcept = 0;
-
-    /// @brief Number of entries in the dense entity array (== size()).
     [[nodiscard]] virtual std::size_t denseEntityCount() const noexcept = 0;
 
-    /// @brief Copy the component from src to dst if src has it.
-    ///        If dst already has the component it is replaced.
-    ///        Fires onComponentAdded via events if the component is newly added.
-    ///        Returns false if src does not have the component.
     virtual bool copyTo(Entity src, Entity dst, EventBus& events) = 0;
 
     IComponentStore() = default;
@@ -69,84 +72,162 @@ public:
 };
 
 // =============================================================================
-// ComponentStore<T> - Concrete Typed Storage
+// TypedIComponentStore<T> — T-typed virtual interface
+//
+// Registry uses this to call typed operations without knowing the Policy.
+// View uses typedStorePtr() + downcast-safe raw pointer accessors.
+// =============================================================================
+
+template <typename T>
+class TypedIComponentStore : public IComponentStore
+{
+public:
+    // Typed CRUD — one virtual dispatch per operation
+    virtual T* addComponent(Entity entity, const T& v) = 0;
+    virtual T* addComponent(Entity entity, T&& v) = 0;
+
+    template <typename... Args>
+    T* emplaceComponent(Entity entity, Args&&... args)
+    {
+        // Forward through a type-erased helper that each concrete class overrides.
+        // We use placement-new style: construct into a temporary and move.
+        return emplaceImpl(entity, T(std::forward<Args>(args)...));
+    }
+
+    virtual T* tryGetComponent(Entity entity) noexcept = 0;
+    virtual const T* tryGetComponent(Entity entity) const noexcept = 0;
+    virtual T& getComponent(Entity entity) = 0;
+    virtual const T& getComponent(Entity entity) const = 0;
+
+    // Raw-pointer accessors for View pre-caching (single virtual call,
+    // then all hot-loop iterations are raw unchecked pointer arithmetic)
+    [[nodiscard]] virtual const Entity*   densePtrTyped()      const noexcept = 0;
+    [[nodiscard]] virtual std::size_t     denseCountTyped()    const noexcept = 0;
+    [[nodiscard]] virtual const uint32_t* sparsePtrTyped()     const noexcept = 0;
+    [[nodiscard]] virtual std::size_t     sparseCountTyped()   const noexcept = 0;
+    [[nodiscard]] virtual T*              componentDataPtrTyped()    noexcept = 0;
+    [[nodiscard]] virtual const T*        componentDataPtrTyped() const noexcept = 0;
+
+    // Dense/data array accessors (for OwningGroup, sort, snapshot)
+    [[nodiscard]] virtual const std::vector<Entity>& denseTyped()    const noexcept = 0;
+    [[nodiscard]] virtual std::vector<Entity>&        mutableDenseTyped() noexcept = 0;
+    [[nodiscard]] virtual T&        dataAtTyped(std::size_t i) = 0;
+    [[nodiscard]] virtual const T&  dataAtTyped(std::size_t i) const = 0;
+    [[nodiscard]] virtual T&        dataAtUncheckedTyped(std::size_t i) noexcept = 0;
+    [[nodiscard]] virtual const T&  dataAtUncheckedTyped(std::size_t i) const noexcept = 0;
+    [[nodiscard]] virtual T&        getUncheckedTyped(Entity entity) noexcept = 0;
+    [[nodiscard]] virtual const T&  getUncheckedTyped(Entity entity) const noexcept = 0;
+
+    // Group support
+    [[nodiscard]] virtual std::size_t getDenseIndexTyped(Entity entity) const noexcept = 0;
+    virtual void swapDenseEntriesTyped(std::size_t i, std::size_t j) noexcept = 0;
+
+    // Storage policy metadata
+    [[nodiscard]] virtual std::size_t dataAlignmentTyped() const noexcept = 0;
+
+    // =========================================================================
+    // Non-virtual forwarders — same names as ComponentStore<T,P> methods
+    //
+    // These let View, OwningGroup, and sort helpers use TypedIComponentStore<T>*
+    // with identical call syntax to the old ComponentStore<T>* interface.
+    // One virtual dispatch per call (the *Typed() virtual); the hot loop inside
+    // View operates on pre-cached raw pointers, so this is called once per view.
+    // =========================================================================
+
+    [[nodiscard]] const Entity*   densePtr()     const noexcept { return densePtrTyped(); }
+    [[nodiscard]] std::size_t     denseCount()   const noexcept { return denseCountTyped(); }
+    [[nodiscard]] const uint32_t* sparsePtr()    const noexcept { return sparsePtrTyped(); }
+    [[nodiscard]] std::size_t     sparseCount()  const noexcept { return sparseCountTyped(); }
+    [[nodiscard]] T*       componentDataPtr()          noexcept { return componentDataPtrTyped(); }
+    [[nodiscard]] const T* componentDataPtr()    const noexcept { return componentDataPtrTyped(); }
+
+    [[nodiscard]] const std::vector<Entity>& dense()         const noexcept { return denseTyped(); }
+    [[nodiscard]] std::vector<Entity>&        mutableDense()       noexcept { return mutableDenseTyped(); }
+
+    [[nodiscard]] T&       dataAt(std::size_t i)                    { return dataAtTyped(i); }
+    [[nodiscard]] const T& dataAt(std::size_t i)              const { return dataAtTyped(i); }
+    [[nodiscard]] T&       dataAtUnchecked(std::size_t i)     noexcept { return dataAtUncheckedTyped(i); }
+    [[nodiscard]] const T& dataAtUnchecked(std::size_t i) const noexcept { return dataAtUncheckedTyped(i); }
+
+    [[nodiscard]] T&       getUnchecked(Entity e)       noexcept { return getUncheckedTyped(e); }
+    [[nodiscard]] const T& getUnchecked(Entity e) const noexcept { return getUncheckedTyped(e); }
+
+    [[nodiscard]] std::size_t getDenseIndex(Entity e) const noexcept { return getDenseIndexTyped(e); }
+    void swapDenseEntries(std::size_t i, std::size_t j) noexcept { swapDenseEntriesTyped(i, j); }
+
+    // Aliases for the typed CRUD (same names as ComponentStore<T,P> non-virtual methods)
+    T* tryGet(Entity e) noexcept        { return tryGetComponent(e); }
+    const T* tryGet(Entity e) const noexcept { return tryGetComponent(e); }
+    T& get(Entity e)                    { return getComponent(e); }
+    const T& get(Entity e) const        { return getComponent(e); }
+
+    template <typename... Args>
+    T* emplace(Entity e, Args&&... args) { return emplaceComponent(e, std::forward<Args>(args)...); }
+
+    T* add(Entity e, const T& v) { return addComponent(e, v); }
+    T* add(Entity e, T&& v)      { return addComponent(e, std::move(v)); }
+
+protected:
+    // Internal emplace helper — takes an already-constructed T by move
+    virtual T* emplaceImpl(Entity entity, T&& v) = 0;
+};
+
+// =============================================================================
+// ComponentStore<T, Policy> — Concrete storage
 // =============================================================================
 
 /**
- * @brief Typed component storage wrapping SparseSetWithData.
+ * @brief Typed component storage with pluggable data container policy.
  *
- * Uses EntityIndex policy so the SparseSet keys on full 64-bit Entity
- * values while indexing the sparse array by the 32-bit slot index. The
- * dense array stores full Entity values directly, providing generational
- * handles for Views without a parallel vector.
- *
- * @tparam T The component data type.
- *
- * @note Thread-safety: NOT thread-safe. The Registry serializes access.
+ * Three parallel arrays:
+ *   mSparse[slotIndex] = dense index (kTombstone = absent)
+ *   mDense[denseIndex] = Entity
+ *   mData[denseIndex]  = T  (policy-defined container)
  */
-template <typename T>
-class ComponentStore : public IComponentStore
+template <typename T, template <typename> class Policy = DefaultStoragePolicy>
+    requires StoragePolicy<Policy>
+class ComponentStore : public TypedIComponentStore<T>
 {
 public:
-    using DataType = T;
-    using StorageType = fat_p::SparseSetWithData<Entity, T, EntityIndex>;
+    using DataType      = T;
+    using PolicyType    = Policy<T>;
+    using ContainerType = typename PolicyType::container_type;
 
-    ComponentStore() = default;
+    static constexpr uint32_t kTombstone = std::numeric_limits<uint32_t>::max();
+
+    ComponentStore() : mData(PolicyType::make()) {}
 
     // =========================================================================
-    // IComponentStore interface
+    // IComponentStore — type-erased interface
     // =========================================================================
 
     [[nodiscard]] bool has(Entity entity) const noexcept override
     {
-        return mStorage.contains(entity);
+        return denseIndexOf(entity) < mDense.size();
     }
 
-    bool remove(Entity entity) override
-    {
-        return mStorage.erase(entity);
-    }
+    bool remove(Entity entity) override { return eraseImpl(entity); }
 
     bool removeAndNotify(Entity entity, EventBus& events) override
     {
-        if (!mStorage.contains(entity))
-        {
-            return false;
-        }
+        if (!has(entity)) return false;
         events.emitComponentRemoved<T>(entity);
-        return mStorage.erase(entity);
+        return eraseImpl(entity);
     }
 
-    [[nodiscard]] std::size_t size() const noexcept override
-    {
-        return mStorage.size();
-    }
-
-    [[nodiscard]] bool empty() const noexcept override
-    {
-        return mStorage.empty();
-    }
+    [[nodiscard]] std::size_t size() const noexcept override { return mDense.size(); }
+    [[nodiscard]] bool empty() const noexcept override { return mDense.empty(); }
 
     void clear() override
     {
-        mStorage.clear();
+        while (!mDense.empty()) eraseImpl(mDense.back());
     }
 
-    [[nodiscard]] const Entity* denseEntities() const noexcept override
-    {
-        return mStorage.dense().data();
-    }
-
-    [[nodiscard]] std::size_t denseEntityCount() const noexcept override
-    {
-        return mStorage.dense().size();
-    }
+    [[nodiscard]] const Entity* denseEntities() const noexcept override { return mDense.data(); }
+    [[nodiscard]] std::size_t denseEntityCount() const noexcept override { return mDense.size(); }
 
     bool copyTo(Entity src, Entity dst, EventBus& events) override
     {
-        // Non-copyable component types (e.g. those holding unique_ptr) cannot
-        // be duplicated. Return false so registry.copy() silently skips them
-        // rather than failing to compile at the call site.
         if constexpr (!std::copyable<T>)
         {
             (void)src; (void)dst; (void)events;
@@ -154,266 +235,259 @@ public:
         }
         else
         {
-            const T* srcComp = mStorage.tryGet(src);
-            if (srcComp == nullptr)
-            {
-                return false;
-            }
-
-            // If dst already has the component, overwrite in-place (no re-insert).
-            T* dstComp = mStorage.tryGet(dst);
-            if (dstComp != nullptr)
-            {
-                *dstComp = *srcComp;
-                events.emitComponentUpdated<T>(dst, *dstComp);
-            }
+            const T* s = tryGetRaw(src);
+            if (!s) return false;
+            T* d = tryGetRaw(dst);
+            if (d) { *d = *s; events.emitComponentUpdated<T>(dst, *d); }
             else
             {
-                T* inserted = mStorage.tryEmplace(dst, *srcComp);
-                if (inserted != nullptr)
-                {
-                    events.emitComponentAdded<T>(dst, *inserted);
-                }
+                T* ins = insertImpl(dst, *s);
+                if (ins) events.emitComponentAdded<T>(dst, *ins);
             }
             return true;
         }
     }
 
     // =========================================================================
-    // Typed operations
+    // TypedIComponentStore<T> — T-typed virtual interface
     // =========================================================================
 
-    /**
-     * @brief Inserts a component for an entity via copy.
-     *
-     * @param entity    The entity to associate the component with.
-     * @param component Component value to copy.
-     * @return Pointer to inserted data, or nullptr if entity already had one.
-     */
-    T* add(Entity entity, const T& component)
+    T* addComponent(Entity entity, const T& v) override
     {
-        return mStorage.tryEmplace(entity, component);
+        if constexpr (std::copyable<T>)
+            return insertImpl(entity, T(v));
+        else
+            return nullptr;  // unreachable for non-copyable T
     }
 
-    /**
-     * @brief Inserts a component for an entity via move.
-     *
-     * @param entity    The entity to associate the component with.
-     * @param component Component value to move.
-     * @return Pointer to inserted data, or nullptr if entity already had one.
-     */
-    T* add(Entity entity, T&& component)
+    T* addComponent(Entity entity, T&& v)      override { return insertImpl(entity, std::move(v)); }
+
+    T* tryGetComponent(Entity entity) noexcept override        { return tryGetRaw(entity); }
+    const T* tryGetComponent(Entity entity) const noexcept override { return tryGetRaw(entity); }
+
+    T& getComponent(Entity entity) override
     {
-        return mStorage.tryEmplace(entity, std::move(component));
+        T* p = tryGetRaw(entity);
+        if (!p) throw std::out_of_range("ComponentStore::get: entity not found");
+        return *p;
     }
 
-    /**
-     * @brief Constructs a component in-place for an entity.
-     *
-     * @tparam Args Constructor argument types for T.
-     * @param entity The entity to associate the component with.
-     * @param args   Arguments forwarded to T's constructor.
-     * @return Pointer to inserted data, or nullptr if entity already had one.
-     */
+    const T& getComponent(Entity entity) const override
+    {
+        const T* p = tryGetRaw(entity);
+        if (!p) throw std::out_of_range("ComponentStore::get: entity not found");
+        return *p;
+    }
+
+    [[nodiscard]] const Entity*   densePtrTyped()    const noexcept override { return mDense.data(); }
+    [[nodiscard]] std::size_t     denseCountTyped()  const noexcept override { return mDense.size(); }
+    [[nodiscard]] const uint32_t* sparsePtrTyped()   const noexcept override { return mSparse.data(); }
+    [[nodiscard]] std::size_t     sparseCountTyped() const noexcept override { return mSparse.size(); }
+    [[nodiscard]] T*       componentDataPtrTyped()       noexcept override { return mData.data(); }
+    [[nodiscard]] const T* componentDataPtrTyped() const noexcept override { return mData.data(); }
+
+    [[nodiscard]] const std::vector<Entity>& denseTyped() const noexcept override { return mDense; }
+    [[nodiscard]] std::vector<Entity>& mutableDenseTyped() noexcept override { return mDense; }
+
+    [[nodiscard]] T&       dataAtTyped(std::size_t i)       override { return mData[i]; }
+    [[nodiscard]] const T& dataAtTyped(std::size_t i) const override { return mData[i]; }
+
+    [[nodiscard]] T&       dataAtUncheckedTyped(std::size_t i) noexcept override { return mData[i]; }
+    [[nodiscard]] const T& dataAtUncheckedTyped(std::size_t i) const noexcept override { return mData[i]; }
+
+    [[nodiscard]] T& getUncheckedTyped(Entity entity) noexcept override
+    {
+        return mData[mSparse[EntityIndex::index(entity)]];
+    }
+
+    [[nodiscard]] const T& getUncheckedTyped(Entity entity) const noexcept override
+    {
+        return mData[mSparse[EntityIndex::index(entity)]];
+    }
+
+    [[nodiscard]] std::size_t getDenseIndexTyped(Entity entity) const noexcept override
+    {
+        return denseIndexOf(entity);
+    }
+
+    void swapDenseEntriesTyped(std::size_t i, std::size_t j) noexcept override
+    {
+        if (i == j) return;
+        std::swap(mDense[i], mDense[j]);
+        std::swap(mData[i],  mData[j]);
+        mSparse[EntityIndex::index(mDense[i])] = static_cast<uint32_t>(i);
+        mSparse[EntityIndex::index(mDense[j])] = static_cast<uint32_t>(j);
+    }
+
+    [[nodiscard]] std::size_t dataAlignmentTyped() const noexcept override
+    {
+        return dataAlignment();
+    }
+
+    // =========================================================================
+    // Non-virtual typed interface (used by View after downcast via typedPtr())
+    // These mirror TypedIComponentStore virtuals but are non-virtual for
+    // use in templates where the concrete type is known at compile time.
+    // =========================================================================
+
+    // The legacy non-virtual names — used by View, OwningGroup, sort helpers.
+    // These are NOT virtual; they're called through ComponentStore<T,P>* directly
+    // after a safe downcast from TypedIComponentStore<T>*.
+
+    T* add(Entity e, const T& v)  { return insertImpl(e, v); }
+    T* add(Entity e, T&& v)       { return insertImpl(e, std::move(v)); }
+
     template <typename... Args>
-    T* emplace(Entity entity, Args&&... args)
+    T* emplace(Entity e, Args&&... args)
     {
-        return mStorage.tryEmplace(entity, std::forward<Args>(args)...);
+        return insertImpl(e, T(std::forward<Args>(args)...));
     }
 
-    [[nodiscard]] T* tryGet(Entity entity) noexcept
+    [[nodiscard]] T* tryGet(Entity e) noexcept             { return tryGetRaw(e); }
+    [[nodiscard]] const T* tryGet(Entity e) const noexcept { return tryGetRaw(e); }
+
+    [[nodiscard]] T& get(Entity e)
     {
-        return mStorage.tryGet(entity);
+        T* p = tryGetRaw(e);
+        if (!p) throw std::out_of_range("ComponentStore::get: entity not found");
+        return *p;
     }
 
-    [[nodiscard]] const T* tryGet(Entity entity) const noexcept
+    [[nodiscard]] const T& get(Entity e) const
     {
-        return mStorage.tryGet(entity);
+        const T* p = tryGetRaw(e);
+        if (!p) throw std::out_of_range("ComponentStore::get: entity not found");
+        return *p;
     }
 
-    [[nodiscard]] T& get(Entity entity)
+    [[nodiscard]] const std::vector<Entity>& dense() const noexcept { return mDense; }
+    [[nodiscard]] std::vector<Entity>& mutableDense() noexcept { return mDense; }
+
+    [[nodiscard]] T&       dataAt(std::size_t i)       { return mData[i]; }
+    [[nodiscard]] const T& dataAt(std::size_t i) const { return mData[i]; }
+    [[nodiscard]] T&       dataAtUnchecked(std::size_t i) noexcept       { return mData[i]; }
+    [[nodiscard]] const T& dataAtUnchecked(std::size_t i) const noexcept { return mData[i]; }
+
+    [[nodiscard]] T& getUnchecked(Entity e) noexcept
     {
-        return mStorage.get(entity);
+        return mData[mSparse[EntityIndex::index(e)]];
     }
 
-    [[nodiscard]] const T& get(Entity entity) const
+    [[nodiscard]] const T& getUnchecked(Entity e) const noexcept
     {
-        return mStorage.get(entity);
+        return mData[mSparse[EntityIndex::index(e)]];
     }
 
-    // =========================================================================
-    // Direct storage access (for View iteration)
-    // =========================================================================
+    [[nodiscard]] const Entity*   densePtr()    const noexcept { return mDense.data(); }
+    [[nodiscard]] std::size_t     denseCount()  const noexcept { return mDense.size(); }
+    [[nodiscard]] const uint32_t* sparsePtr()   const noexcept { return mSparse.data(); }
+    [[nodiscard]] std::size_t     sparseCount() const noexcept { return mSparse.size(); }
+    [[nodiscard]] T*       componentDataPtr()       noexcept { return mData.data(); }
+    [[nodiscard]] const T* componentDataPtr() const noexcept { return mData.data(); }
 
-    /// @brief Returns the dense key array (full Entity values with generation).
-    [[nodiscard]] const std::vector<Entity>& dense() const noexcept
-    {
-        return mStorage.dense();
-    }
+    [[nodiscard]] std::size_t getDenseIndex(Entity e) const noexcept { return denseIndexOf(e); }
 
-    [[nodiscard]] const std::vector<T>& data() const noexcept
-    {
-        return mStorage.data();
-    }
-
-    [[nodiscard]] T& dataAt(std::size_t denseIndex)
-    {
-        return mStorage.dataAt(denseIndex);
-    }
-
-    [[nodiscard]] const T& dataAt(std::size_t denseIndex) const
-    {
-        return mStorage.dataAt(denseIndex);
-    }
-
-    // =========================================================================
-    // Unchecked access (for View iteration hot paths)
-    // =========================================================================
-
-    /// @brief Direct data access by dense index — no bounds check.
-    /// @warning Caller must ensure denseIndex < size().
-    [[nodiscard]] T& dataAtUnchecked(std::size_t denseIndex) noexcept
-    {
-        return mStorage.data()[denseIndex];
-    }
-
-    [[nodiscard]] const T& dataAtUnchecked(std::size_t denseIndex) const noexcept
-    {
-        return mStorage.data()[denseIndex];
-    }
-
-    /// @brief Get component by entity without re-verifying membership.
-    /// Combines the sparse→dense lookup into a single step. The caller
-    /// must have already confirmed the entity is in this store (via has()).
-    /// @warning Undefined behavior if entity is not in the store.
-    [[nodiscard]] T& getUnchecked(Entity entity) noexcept
-    {
-        const auto sparseIdx = EntityIndex::index(entity);
-        const auto denseIdx = mStorage.sparse()[sparseIdx];
-        return mStorage.data()[denseIdx];
-    }
-
-    [[nodiscard]] const T& getUnchecked(Entity entity) const noexcept
-    {
-        const auto sparseIdx = EntityIndex::index(entity);
-        const auto denseIdx = mStorage.sparse()[sparseIdx];
-        return mStorage.data()[denseIdx];
-    }
-
-    [[nodiscard]] StorageType& storage() noexcept
-    {
-        return mStorage;
-    }
-
-    [[nodiscard]] const StorageType& storage() const noexcept
-    {
-        return mStorage;
-    }
-
-    /// @brief Returns the dense entity array. Used by OwningGroup to reorder entries.
-    [[nodiscard]] std::vector<Entity>& mutableDense() noexcept
-    {
-        return const_cast<std::vector<Entity>&>(mStorage.dense());
-    }
-
-    // =========================================================================
-    // Group support: in-place dense array reordering
-    //
-    // OwningGroup maintains a contiguous prefix [0, groupSize) in each owned
-    // store where all group entities are packed. These two primitives are the
-    // only operations needed to maintain that invariant.
-    // =========================================================================
-
-    /**
-     * @brief Returns the dense index of entity, or size() if not present.
-     */
-    [[nodiscard]] std::size_t getDenseIndex(Entity entity) const noexcept
-    {
-        const auto sparseIdx = EntityIndex::index(entity);
-        const auto& sp = mStorage.sparse();
-        if (sparseIdx >= sp.size())
-        {
-            return mStorage.size(); // sentinel: not present
-        }
-        const std::size_t di = sp[sparseIdx];
-        // Validate: the dense slot must point back to this entity.
-        if (di >= mStorage.dense().size() ||
-            EntityIndex::index(mStorage.dense()[di]) != sparseIdx)
-        {
-            return mStorage.size();
-        }
-        return di;
-    }
-
-    /**
-     * @brief Swap the entities at dense positions i and j in-place.
-     *
-     * Updates both dense[] and data[] arrays, and patches the two sparse
-     * entries so lookups remain correct.
-     *
-     * @pre i < size() && j < size()
-     */
     void swapDenseEntries(std::size_t i, std::size_t j) noexcept
     {
         if (i == j) return;
-
-        auto& dens = mutableDense();
-        auto& dat  = mStorage.data();
-        auto& sp   = mStorage.sparse();
-
-        std::swap(dens[i], dens[j]);
-        std::swap(dat[i], dat[j]);
-        sp[EntityIndex::index(dens[i])] = static_cast<uint32_t>(i);
-        sp[EntityIndex::index(dens[j])] = static_cast<uint32_t>(j);
+        std::swap(mDense[i], mDense[j]);
+        std::swap(mData[i],  mData[j]);
+        mSparse[EntityIndex::index(mDense[i])] = static_cast<uint32_t>(i);
+        mSparse[EntityIndex::index(mDense[j])] = static_cast<uint32_t>(j);
     }
 
-    // =========================================================================
-    // Raw-pointer accessors for View iteration pre-caching
-    //
-    // View::eachWithPivot loads these into local variables before the hot loop.
-    // Working with raw stack-local pointers eliminates Clang's conservative
-    // per-iteration reloads of the SparseSetWithData's internal vector metadata
-    // (data pointer, size), which it cannot hoist when they are accessed through
-    // the ComponentStore pointer due to potential aliasing with loop body writes.
-    // =========================================================================
-
-    /// @brief Raw pointer to the dense entity array. Valid until next add/remove.
-    [[nodiscard]] const Entity* densePtr() const noexcept
+    static constexpr std::size_t dataAlignment() noexcept
     {
-        return mStorage.dense().data();
+        if constexpr (requires { ContainerType::alignment; })
+            return ContainerType::alignment;
+        else
+            return alignof(T);
     }
 
-    /// @brief Number of entries in the dense array (== size()).
-    [[nodiscard]] std::size_t denseCount() const noexcept
+protected:
+    // TypedIComponentStore<T> pure virtual — forward to insertImpl
+    T* emplaceImpl(Entity entity, T&& v) override
     {
-        return mStorage.dense().size();
-    }
-
-    /// @brief Raw pointer to the sparse index array. Valid until next add/remove.
-    [[nodiscard]] const uint32_t* sparsePtr() const noexcept
-    {
-        return mStorage.sparse().data();
-    }
-
-    /// @brief Number of entries in the sparse array (capacity, not entity count).
-    [[nodiscard]] std::size_t sparseCount() const noexcept
-    {
-        return mStorage.sparse().size();
-    }
-
-    /// @brief Raw pointer to the component data array. Valid until next add/remove.
-    [[nodiscard]] T* componentDataPtr() noexcept
-    {
-        return mStorage.data().data();
-    }
-
-    [[nodiscard]] const T* componentDataPtr() const noexcept
-    {
-        return mStorage.data().data();
+        return insertImpl(entity, std::move(v));
     }
 
 private:
-    StorageType mStorage;
+    // =========================================================================
+    // Core helpers
+    // =========================================================================
+
+    [[nodiscard]] std::size_t denseIndexOf(Entity entity) const noexcept
+    {
+        const auto slot = static_cast<std::size_t>(EntityIndex::index(entity));
+        if (slot >= mSparse.size()) return mDense.size();
+        const std::size_t di = mSparse[slot];
+        if (di >= mDense.size() || EntityIndex::index(mDense[di]) != slot)
+            return mDense.size();
+        return di;
+    }
+
+    [[nodiscard]] T* tryGetRaw(Entity entity) noexcept
+    {
+        const std::size_t di = denseIndexOf(entity);
+        return di < mDense.size() ? &mData[di] : nullptr;
+    }
+
+    [[nodiscard]] const T* tryGetRaw(Entity entity) const noexcept
+    {
+        const std::size_t di = denseIndexOf(entity);
+        return di < mDense.size() ? &mData[di] : nullptr;
+    }
+
+    template <typename U>
+    T* insertImpl(Entity entity, U&& value)
+    {
+        const auto slot = static_cast<std::size_t>(EntityIndex::index(entity));
+
+        if (slot >= mSparse.size())
+            mSparse.resize(slot + 1, kTombstone);
+
+        const std::size_t existing = mSparse[slot];
+        if (existing < mDense.size() && EntityIndex::index(mDense[existing]) == slot)
+            return nullptr; // already present
+
+        const std::size_t di = mDense.size();
+        mDense.push_back(entity);
+        mData.push_back(std::forward<U>(value));
+        mSparse[slot] = static_cast<uint32_t>(di);
+        return &mData[di];
+    }
+
+    bool eraseImpl(Entity entity) noexcept
+    {
+        const auto slot = static_cast<std::size_t>(EntityIndex::index(entity));
+        if (slot >= mSparse.size()) return false;
+
+        const std::size_t di = mSparse[slot];
+        if (di >= mDense.size() || EntityIndex::index(mDense[di]) != slot)
+            return false;
+
+        const std::size_t last = mDense.size() - 1;
+        if (di != last)
+        {
+            const Entity lastEntity = mDense[last];
+            mDense[di] = lastEntity;
+            mData[di]  = std::move(mData[last]);
+            mSparse[EntityIndex::index(lastEntity)] = static_cast<uint32_t>(di);
+        }
+
+        mDense.pop_back();
+        mData.pop_back();
+        mSparse[slot] = kTombstone;
+        return true;
+    }
+
+    // =========================================================================
+    // Data members
+    // =========================================================================
+
+    std::vector<uint32_t> mSparse;
+    std::vector<Entity>   mDense;
+    ContainerType         mData;
 };
 
 } // namespace fatp_ecs

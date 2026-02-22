@@ -98,7 +98,7 @@ class ViewImpl<std::tuple<Ts...>, std::tuple<Xs...>>
 
 public:
     // Include-only constructor (no exclusions).
-    explicit ViewImpl(ComponentStore<Ts>*... includeStores)
+    explicit ViewImpl(TypedIComponentStore<Ts>*... includeStores)
         : mStores(includeStores...)
         , mExcludeStores()
     {
@@ -108,8 +108,8 @@ public:
     // Uses a struct tag to avoid overload ambiguity when Xs is empty.
     struct WithExclude {};
     explicit ViewImpl(WithExclude,
-                      std::tuple<ComponentStore<Ts>*...> includeStores,
-                      std::tuple<ComponentStore<Xs>*...> excludeStores)
+                      std::tuple<TypedIComponentStore<Ts>*...> includeStores,
+                      std::tuple<TypedIComponentStore<Xs>*...> excludeStores)
         : mStores(std::move(includeStores))
         , mExcludeStores(std::move(excludeStores))
     {
@@ -184,8 +184,8 @@ public:
     }
 
 private:
-    std::tuple<ComponentStore<Ts>*...> mStores;
-    std::tuple<ComponentStore<Xs>*...> mExcludeStores;
+    std::tuple<TypedIComponentStore<Ts>*...> mStores;
+    std::tuple<TypedIComponentStore<Xs>*...> mExcludeStores;
 
     // =========================================================================
     // Null check (include stores only)
@@ -225,7 +225,7 @@ private:
         }
 
         template <typename X>
-        explicit ExcludeCache(const ComponentStore<X>* store) noexcept
+        explicit ExcludeCache(const TypedIComponentStore<X>* store) noexcept
             : sparseData(store ? store->sparsePtr()   : nullptr)
             , sparseSize(store ? store->sparseCount() : 0)
             , denseData (store ? store->densePtr()    : nullptr)
@@ -424,7 +424,7 @@ private:
         std::size_t     denseSize;
         T*              componentData;
 
-        explicit NonPivotCache(ComponentStore<T>* store) noexcept
+        explicit NonPivotCache(TypedIComponentStore<T>* store) noexcept
             : sparseData(store->sparsePtr())
             , sparseSize(store->sparseCount())
             , denseData(store->densePtr())
@@ -454,7 +454,7 @@ private:
         std::size_t     denseSize;
         const T*        componentData;
 
-        explicit NonPivotCacheConst(const ComponentStore<T>* store) noexcept
+        explicit NonPivotCacheConst(const TypedIComponentStore<T>* store) noexcept
             : sparseData(store->sparsePtr())
             , sparseSize(store->sparseCount())
             , denseData(store->densePtr())
