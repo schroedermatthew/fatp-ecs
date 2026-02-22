@@ -118,6 +118,11 @@ if(FATP_ECS_BUILD_TESTS)
         target_compile_options(test_clear PRIVATE ${FATP_ECS_WARNING_FLAGS})
         add_test(NAME test_clear COMMAND test_clear)
     endif()
+
+    add_executable(test_snapshot tests/test_snapshot.cpp)
+    target_link_libraries(test_snapshot PRIVATE fatp_ecs)
+    target_compile_options(test_snapshot PRIVATE ${FATP_ECS_WARNING_FLAGS})
+    add_test(NAME test_snapshot COMMAND test_snapshot)
 endif()
 
 # ==============================================================================

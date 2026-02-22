@@ -23,6 +23,7 @@
 #include <typeindex>
 #include <typeinfo>
 
+#include <fat_p/BinaryLite.h>
 #include <fat_p/FastHashMap.h>
 #include <fat_p/SlotMap.h>
 #include <fat_p/SmallVector.h>
@@ -39,6 +40,10 @@
 
 namespace fatp_ecs
 {
+
+// Forward declarations for snapshot types — implementations in Snapshot_Impl.h
+class RegistrySnapshot;
+class RegistrySnapshotLoader;
 
 // =============================================================================
 // Registry
@@ -620,6 +625,52 @@ public:
                 EntityTraits::make(entry.handle.index, entry.handle.generation));
         }
         return result;
+    }
+
+    // =========================================================================
+    // Snapshot / Serialization
+    // =========================================================================
+
+    /**
+     * @brief Begin serializing registry state into enc.
+     *
+     * Writes the snapshot header (magic, version, entity table) immediately,
+     * then returns a RegistrySnapshot the caller uses to serialize individual
+     * component types.
+     *
+     * @param enc  Encoder to write into. Must outlive the returned snapshot.
+     * @return     RegistrySnapshot for per-component serialization calls.
+     *
+     * @note Defined in Snapshot_Impl.h (included from FatpEcs.h).
+     * @note Thread-safety: NOT thread-safe.
+     */
+    [[nodiscard]] RegistrySnapshot snapshot(fat_p::binary::Encoder& enc);
+
+    /**
+     * @brief Begin restoring registry state from dec.
+     *
+     * Clears this registry, reads the snapshot header, and recreates all
+     * entities (building the old→new EntityMap). Returns a RegistrySnapshotLoader
+     * the caller uses to restore individual component types.
+     *
+     * @param dec  Decoder positioned at the start of a snapshot buffer.
+     * @return     RegistrySnapshotLoader for per-component deserialization calls.
+     *
+     * @note Defined in Snapshot_Impl.h (included from FatpEcs.h).
+     * @note Thread-safety: NOT thread-safe.
+     */
+    [[nodiscard]] RegistrySnapshotLoader snapshotLoader(fat_p::binary::Decoder& dec);
+
+    /**
+     * @brief Read-only access to a typed component store, or nullptr if absent.
+     *
+     * Used by RegistrySnapshot to iterate component data without type erasure.
+     * Returns nullptr if no entity has ever had component T.
+     */
+    template <typename T>
+    [[nodiscard]] const ComponentStore<T>* tryGetStore() const
+    {
+        return getStore<T>();
     }
 
 private:

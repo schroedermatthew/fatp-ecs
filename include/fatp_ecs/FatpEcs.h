@@ -31,3 +31,9 @@
 #include "EntityTemplate_Impl.h"
 #include "SystemToggle.h"
 #include "SafeMath.h"
+
+// Snapshot / serialization (Phase 4)
+#include "Snapshot.h"
+// Note: Snapshot_Impl.h is included at the bottom of Snapshot.h, which is the
+// correct include point — Registry is fully defined by the time Snapshot.h is
+// reached here, so Snapshot_Impl.h can define the out-of-line methods.
