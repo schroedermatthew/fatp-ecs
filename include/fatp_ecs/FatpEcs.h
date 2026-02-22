@@ -12,6 +12,7 @@
 #include "ComponentStore.h"
 #include "EventBus.h"
 #include "Registry.h"
+#include "RuntimeView.h"
 #include "View.h"
 
 // Deferred operations (Phase 2 — must follow Registry.h)

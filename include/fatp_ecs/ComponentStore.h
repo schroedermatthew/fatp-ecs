@@ -40,6 +40,13 @@ public:
     [[nodiscard]] virtual bool empty() const noexcept = 0;
     virtual void clear() = 0;
 
+    /// @brief Pointer to the dense entity array. Used by RuntimeView to iterate
+    ///        the pivot store without knowing the component type.
+    [[nodiscard]] virtual const Entity* denseEntities() const noexcept = 0;
+
+    /// @brief Number of entries in the dense entity array (== size()).
+    [[nodiscard]] virtual std::size_t denseEntityCount() const noexcept = 0;
+
     IComponentStore() = default;
     IComponentStore(const IComponentStore&) = delete;
     IComponentStore& operator=(const IComponentStore&) = delete;
@@ -99,6 +106,16 @@ public:
     void clear() override
     {
         mStorage.clear();
+    }
+
+    [[nodiscard]] const Entity* denseEntities() const noexcept override
+    {
+        return mStorage.dense().data();
+    }
+
+    [[nodiscard]] std::size_t denseEntityCount() const noexcept override
+    {
+        return mStorage.dense().size();
     }
 
     // =========================================================================

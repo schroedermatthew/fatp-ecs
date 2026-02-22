@@ -29,6 +29,7 @@
 #include "ComponentStore.h"
 #include "Entity.h"
 #include "EventBus.h"
+#include "RuntimeView.h"
 #include "TypeId.h"
 #include "View.h"
 
@@ -345,6 +346,64 @@ public:
                  std::make_tuple(getOrNullStore<Xs>()...));
     }
 
+    /**
+     * @brief Create a type-erased RuntimeView from TypeId lists.
+     *
+     * For use when component types are not known at compile time: plugin
+     * systems, scripting layers, editors, and generic serialisers.
+     *
+     * Null stores (TypeIds for types never registered) are handled gracefully:
+     * a null include store causes each() to be a no-op; a null exclude store
+     * is skipped (type never registered means no entity has it).
+     *
+     * @param include TypeIds of components entities must have.
+     * @param exclude TypeIds of components entities must not have (may be empty).
+     * @return RuntimeView ready for iteration.
+     *
+     * @example
+     * @code
+     *   auto view = registry.runtimeView(
+     *       {typeId<Position>(), typeId<Velocity>()},
+     *       {typeId<Frozen>()});
+     *   view.each([](Entity e) { ... });
+     * @endcode
+     */
+    [[nodiscard]] RuntimeView
+    runtimeView(std::initializer_list<TypeId> include,
+                std::initializer_list<TypeId> exclude = {})
+    {
+        RuntimeView rv;
+        for (TypeId tid : include)
+        {
+            rv.addIncludeStore(getStoreById(tid));
+        }
+        for (TypeId tid : exclude)
+        {
+            rv.addExcludeStore(getStoreById(tid));
+        }
+        return rv;
+    }
+
+    /**
+     * @brief Span-based overload of runtimeView for pre-built TypeId arrays.
+     */
+    [[nodiscard]] RuntimeView
+    runtimeView(const TypeId* includeBegin, std::size_t includeCount,
+                const TypeId* excludeBegin = nullptr,
+                std::size_t   excludeCount = 0)
+    {
+        RuntimeView rv;
+        for (std::size_t i = 0; i < includeCount; ++i)
+        {
+            rv.addIncludeStore(getStoreById(includeBegin[i]));
+        }
+        for (std::size_t i = 0; i < excludeCount; ++i)
+        {
+            rv.addExcludeStore(getStoreById(excludeBegin[i]));
+        }
+        return rv;
+    }
+
     // =========================================================================
     // Bulk Operations
     // =========================================================================
@@ -454,6 +513,27 @@ private:
     ComponentStore<T>* getOrNullStore()
     {
         return getStore<T>();
+    }
+
+    /// @brief Type-erased store lookup by TypeId. Returns nullptr if the type
+    ///        has never been registered. Used by runtimeView().
+    [[nodiscard]] IComponentStore* getStoreById(TypeId tid) noexcept
+    {
+        if (tid < kStoreCacheSize && mStoreCache[tid] != nullptr)
+        {
+            return mStoreCache[tid];
+        }
+        auto* val = mStores.find(tid);
+        if (val == nullptr)
+        {
+            return nullptr;
+        }
+        auto* raw = val->get();
+        if (tid < kStoreCacheSize)
+        {
+            mStoreCache[tid] = raw;
+        }
+        return raw;
     }
 
     // =========================================================================
