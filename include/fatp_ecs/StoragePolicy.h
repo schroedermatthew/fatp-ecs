@@ -26,6 +26,8 @@
  *
  * container_type must support:
  *   push_back(T&&), pop_back(),
+ *   emplace_back(Args&&...) -> T&,
+ *   back() -> T&,
  *   operator[](size_t) -> T&,
  *   data() -> T*,
  *   size() -> size_t,
@@ -57,6 +59,8 @@ concept StorageContainer = requires(C c, typename C::value_type v, std::size_t i
     typename C::value_type;
     c.push_back(std::move(v));
     c.pop_back();
+    { c.emplace_back(std::move(v)) } -> std::same_as<typename C::value_type&>;
+    { c.back() }                     -> std::same_as<typename C::value_type&>;
     { c[i] }     -> std::convertible_to<typename C::value_type&>;
     { c.data() } -> std::convertible_to<typename C::value_type*>;
     { c.size() } -> std::convertible_to<std::size_t>;
