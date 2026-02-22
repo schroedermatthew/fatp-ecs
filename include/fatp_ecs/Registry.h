@@ -14,6 +14,7 @@
 // - Signal: Event system (via EventBus)
 // - BitSet: Component masks (via ComponentMask.h)
 
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cstddef>
@@ -503,6 +504,101 @@ public:
     }
 
     // =========================================================================
+    // Sorting
+    // =========================================================================
+
+    /**
+     * @brief Sort component store T's dense array by a comparator.
+     *
+     * After this call, iterating view<T>() will visit entities in the order
+     * defined by @p comparator. The comparator receives two component values
+     * and returns true if the first should come before the second.
+     *
+     * Uses an O(n log n) indirect sort followed by O(n) in-place permutation
+     * application, so each entity is moved at most once.
+     *
+     * @tparam T         Component type whose store is sorted.
+     * @tparam Comparator Callable with signature bool(const T&, const T&).
+     * @param  comparator Strict weak ordering comparator.
+     *
+     * @note Do NOT sort a store owned by an OwningGroup — doing so corrupts
+     *       the group's packed-prefix invariant. Sort before creating groups,
+     *       or sort only component types that are not group-owned.
+     *
+     * @note If T has never been registered (no entity ever had T), this is
+     *       a no-op.
+     *
+     * @example
+     * @code
+     *   // Sort entities by decreasing health (injured-first):
+     *   registry.sort<Health>([](const Health& a, const Health& b) {
+     *       return a.hp < b.hp;
+     *   });
+     *
+     *   // Sort by entity depth for back-to-front rendering:
+     *   registry.sort<RenderDepth>([](const RenderDepth& a, const RenderDepth& b) {
+     *       return a.z > b.z;
+     *   });
+     * @endcode
+     */
+    template <typename T, typename Comparator>
+    void sort(Comparator&& comparator)
+    {
+        auto* store = getStore<T>();
+        if (store == nullptr || store->size() <= 1)
+        {
+            return;
+        }
+        sortStore(*store, std::forward<Comparator>(comparator));
+    }
+
+    /**
+     * @brief Sort store B so its entities appear in the same relative order
+     *        as they do in store A.
+     *
+     * Entities present in B but absent from A are left at the tail of B in
+     * their original relative order. Entities present in A but absent from B
+     * are ignored.
+     *
+     * This is the primary tool for aligning two stores so that View<A, B>
+     * iteration is cache-friendly: after sort<A, B>(), the entities shared
+     * by both stores appear at matching dense indices in B (relative to A's
+     * order).
+     *
+     * @tparam A Pivot store — its order is the target.
+     * @tparam B Store to reorder to match A.
+     *
+     * @note Do NOT use on group-owned stores (see sort<T> caveat above).
+     * @note If either type is unregistered, this is a no-op.
+     *
+     * @example
+     * @code
+     *   // Sort by position, then align velocity to match:
+     *   registry.sort<Position>([](const Position& a, const Position& b) {
+     *       return a.x < b.x;
+     *   });
+     *   registry.sort<Position, Velocity>(); // Velocity now mirrors Position order
+     *
+     *   // View<Position, Velocity> now walks both arrays sequentially.
+     * @endcode
+     */
+    template <typename A, typename B>
+    void sort()
+    {
+        auto* pivotStore = getStore<A>();
+        auto* followStore = getStore<B>();
+        if (pivotStore == nullptr || followStore == nullptr)
+        {
+            return;
+        }
+        if (followStore->size() <= 1)
+        {
+            return;
+        }
+        sortStoreToMatch(*pivotStore, *followStore);
+    }
+
+    // =========================================================================
     // Bulk Operations
     // =========================================================================
 
@@ -611,6 +707,104 @@ private:
     ComponentStore<T>* getOrNullStore()
     {
         return getStore<T>();
+    }
+
+    // =========================================================================
+    // Sort helpers
+    // =========================================================================
+
+    /**
+     * @brief Indirect-sort a ComponentStore<T> by a comparator.
+     *
+     * 1. Build permutation perm[0..n-1] = {0, 1, ..., n-1}.
+     * 2. std::sort perm by comparator(data[perm[i]], data[perm[j]]).
+     * 3. Apply the permutation in-place using cycle decomposition:
+     *    each dense index is visited at most twice — once to start the cycle,
+     *    once to close it — so the total number of swapDenseEntries calls is O(n).
+     *
+     * The cycle-decomposition trick avoids the O(n²) swap count that a naive
+     * selection sort would incur.
+     */
+    template <typename T, typename Comparator>
+    static void sortStore(ComponentStore<T>& store, Comparator&& comparator)
+    {
+        const std::size_t n = store.size();
+
+        // Build permutation sorted by comparator applied to component data.
+        std::vector<std::size_t> perm(n);
+        for (std::size_t i = 0; i < n; ++i) perm[i] = i;
+
+        std::sort(perm.begin(), perm.end(),
+                  [&](std::size_t a, std::size_t b) {
+                      return comparator(store.dataAtUnchecked(a),
+                                        store.dataAtUnchecked(b));
+                  });
+
+        // Apply permutation via cycle decomposition.
+        // visited[i] = true once index i has been placed in its final position.
+        std::vector<bool> visited(n, false);
+
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            if (visited[i] || perm[i] == i)
+            {
+                visited[i] = true;
+                continue;
+            }
+
+            // Follow the cycle starting at i.
+            std::size_t current = i;
+            while (!visited[current])
+            {
+                const std::size_t next = perm[current];
+                visited[current] = true;
+                if (next != i && !visited[next])
+                {
+                    store.swapDenseEntries(current, next);
+                    current = next;
+                }
+                else
+                {
+                    break;
+                }
+            }
+        }
+    }
+
+    /**
+     * @brief Rearrange followStore so its entities appear in the same relative
+     *        order as they do in pivotStore.
+     *
+     * Algorithm: iterate pivot's dense array left-to-right. For each entity
+     * that is also in follow, swap it into the next consecutive position
+     * (starting from index 0). Entities in follow but absent from pivot remain
+     * at the tail in their original order.
+     *
+     * Total swaps: at most min(|A|, |B|) — linear.
+     */
+    template <typename A, typename B>
+    static void sortStoreToMatch(ComponentStore<A>& pivotStore,
+                                 ComponentStore<B>& followStore)
+    {
+        std::size_t nextPos = 0; // next slot to fill in followStore
+
+        const std::size_t pivotCount = pivotStore.size();
+        for (std::size_t pi = 0; pi < pivotCount; ++pi)
+        {
+            const Entity entity = pivotStore.dense()[pi];
+            const std::size_t fi = followStore.getDenseIndex(entity);
+
+            if (fi == followStore.size())
+            {
+                continue; // entity not in followStore — skip
+            }
+
+            if (fi != nextPos)
+            {
+                followStore.swapDenseEntries(fi, nextPos);
+            }
+            ++nextPos;
+        }
     }
 
     // =========================================================================

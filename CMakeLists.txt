@@ -106,6 +106,11 @@ if(FATP_ECS_BUILD_TESTS)
     target_compile_options(test_owning_group PRIVATE ${FATP_ECS_WARNING_FLAGS})
     add_test(NAME test_owning_group COMMAND test_owning_group)
 
+    add_executable(test_sort tests/test_sort.cpp)
+    target_link_libraries(test_sort PRIVATE fatp_ecs)
+    target_compile_options(test_sort PRIVATE ${FATP_ECS_WARNING_FLAGS})
+    add_test(NAME test_sort COMMAND test_sort)
+
     # Registry::clear() stress test
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_clear.cpp")
         add_executable(test_clear tests/test_clear.cpp)
