@@ -29,6 +29,7 @@
 #include "ComponentStore.h"
 #include "Entity.h"
 #include "EventBus.h"
+#include "Observer.h"
 #include "RuntimeView.h"
 #include "TypeId.h"
 #include "View.h"
@@ -405,6 +406,45 @@ public:
     }
 
     // =========================================================================
+    // Observers
+    // =========================================================================
+
+    /**
+     * @brief Create an Observer wired to the specified component event triggers.
+     *
+     * @tparam Triggers Mix of OnAdded<T>, OnRemoved<T>, and OnUpdated<T> tags.
+     *
+     * The observer accumulates dirty entities until clear() is called. It
+     * automatically connects to onEntityDestroyed to remove stale handles.
+     *
+     * @return Observer with all requested connections live.
+     *
+     * @example
+     * @code
+     *   // Dirty when Position is added or patched:
+     *   auto obs = registry.observe(OnAdded<Position>{}, OnUpdated<Position>{});
+     *
+     *   // Dirty when Velocity is added, Position or Velocity is patched:
+     *   auto obs2 = registry.observe(
+     *       OnAdded<Velocity>{},
+     *       OnUpdated<Position>{},
+     *       OnUpdated<Velocity>{});
+     *
+     *   // Each frame:
+     *   obs.each([&](Entity e) { ... });
+     *   obs.clear();
+     * @endcode
+     */
+    template <typename... Triggers>
+    [[nodiscard]] Observer observe(Triggers... triggers)
+    {
+        Observer obs;
+        obs.connectEntityDestroyed(mEvents);
+        (connectTrigger(obs, triggers), ...);
+        return obs;
+    }
+
+    // =========================================================================
     // Bulk Operations
     // =========================================================================
 
@@ -513,6 +553,28 @@ private:
     ComponentStore<T>* getOrNullStore()
     {
         return getStore<T>();
+    }
+
+    // =========================================================================
+    // Observer trigger dispatch
+    // =========================================================================
+
+    template <typename T>
+    void connectTrigger(Observer& obs, OnAdded<T>)
+    {
+        obs.connectAdded<T>(mEvents);
+    }
+
+    template <typename T>
+    void connectTrigger(Observer& obs, OnRemoved<T>)
+    {
+        obs.connectRemoved<T>(mEvents);
+    }
+
+    template <typename T>
+    void connectTrigger(Observer& obs, OnUpdated<T>)
+    {
+        obs.connectUpdated<T>(mEvents);
     }
 
     /// @brief Type-erased store lookup by TypeId. Returns nullptr if the type

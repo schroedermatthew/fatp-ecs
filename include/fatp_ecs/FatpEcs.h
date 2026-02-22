@@ -11,6 +11,7 @@
 #include "TypeId.h"
 #include "ComponentStore.h"
 #include "EventBus.h"
+#include "Observer.h"
 #include "Registry.h"
 #include "RuntimeView.h"
 #include "View.h"
