@@ -199,7 +199,15 @@ jobs:
           repository: schroedermatthew/FatP
           path: FatP
 
+      - name: Cache vcpkg EnTT
+        id: cache-vcpkg
+        uses: actions/cache@v4
+        with:
+          path: C:/vcpkg/packages/entt_x64-windows
+          key: vcpkg-entt-x64-windows-v1
+
       - name: Install EnTT via vcpkg
+        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
         run: vcpkg install entt:x64-windows
 
       - name: Configure (with benchmarks)
