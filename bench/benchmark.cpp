@@ -492,7 +492,7 @@ void section11_Frag(BenchmarkRunner& runner)
     runner.section("11. FRAGMENTED ITERATION")
           .contract("Create 2N, destroy odd indices, iterate remaining N with Position. Tests post-deletion density.");
 
-    for (auto N : {10'000u, 100'000u})
+    for (auto N : {10'000u, 100'000u, 1'000'000u})
     {
         std::unique_ptr<fatp_ecs::Registry> fReg;
         std::unique_ptr<entt::registry> e32Reg;
@@ -538,7 +538,7 @@ void section12_Churn(BenchmarkRunner& runner)
     runner.section("12. MIXED CREATE/DESTROY (churn)")
           .contract("Pre-create N entities, then create+destroy N more (alternating). Churn stress test.");
 
-    for (auto N : {10'000u, 100'000u})
+    for (auto N : {10'000u, 100'000u, 1'000'000u})
     {
         std::unique_ptr<fatp_ecs::Registry> fReg;
         std::vector<fatp_ecs::Entity> fEnts;
