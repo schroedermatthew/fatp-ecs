@@ -39,8 +39,8 @@ namespace fatp_ecs
 
 class Registry;
 
-template <typename... Ts>
-class View;
+template <typename IncludePack, typename ExcludePack>
+class ViewImpl;
 
 // =============================================================================
 // System Descriptor

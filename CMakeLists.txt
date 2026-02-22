@@ -81,6 +81,11 @@ if(FATP_ECS_BUILD_TESTS)
     target_compile_options(test_ecs_phase3 PRIVATE ${FATP_ECS_WARNING_FLAGS})
     add_test(NAME test_ecs_phase3 COMMAND test_ecs_phase3)
 
+    add_executable(test_exclude_filters tests/test_exclude_filters.cpp)
+    target_link_libraries(test_exclude_filters PRIVATE fatp_ecs)
+    target_compile_options(test_exclude_filters PRIVATE ${FATP_ECS_WARNING_FLAGS})
+    add_test(NAME test_exclude_filters COMMAND test_exclude_filters)
+
     # Registry::clear() stress test
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_clear.cpp")
         add_executable(test_clear tests/test_clear.cpp)

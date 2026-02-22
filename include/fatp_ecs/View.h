@@ -16,6 +16,19 @@
 // safe use of the entities for destroy(), isAlive(), and command
 // buffer operations.
 //
+// Exclude filters:
+//
+// View<A, B> can be constructed with an optional Exclude<Xs...> argument.
+// Entities that possess any excluded component type are skipped during
+// iteration. Exclude stores are nullable — if a type has never been
+// registered in the Registry (no entity ever had that component), the
+// store pointer is null, which is treated as "no entity has it" and the
+// exclude check trivially passes. This matches EnTT's behaviour.
+//
+// The exclude check is integrated into the per-entity gate in
+// invokeFuncIfPresent, adding one sparse array read per excluded type
+// per entity (same cost as a non-pivot include probe).
+//
 // Performance design — Clang aliasing fix:
 //
 // The previous implementation accessed non-pivot components via has() then
@@ -24,7 +37,7 @@
 // Clang's alias analysis concluded these fields could be modified by the
 // loop body (volatile gSink writes, mutable component references), so it
 // reloaded the vector metadata from memory on every iteration rather than
-// hoisting it to registers. This generated 8–10 extra loads per iteration
+// hoisting it to registers. This generated 8-10 extra loads per iteration
 // in the 2-comp and 3-comp cases, causing the regression observed on
 // Clang-16/17 in CI benchmarks.
 //
@@ -48,24 +61,57 @@ namespace fatp_ecs
 class Registry;
 
 // =============================================================================
-// View - Multi-Component Iteration
+// Exclude - Tag type for exclude filters
 // =============================================================================
 
 /**
- * @brief Iterates all entities possessing every component type in Ts.
+ * @brief Tag type expressing component types that must be absent for an entity
+ *        to be visited by a View.
  *
- * @tparam Ts Component types to match.
+ * Usage:
+ * @code
+ *   // Iterate entities with Position and Velocity, skipping those with Frozen.
+ *   registry.view<Position, Velocity>(Exclude<Frozen>{}).each(...);
  *
- * @note Thread-safety: NOT thread-safe. Use Scheduler for parallel iteration.
+ *   // Multiple excluded types:
+ *   registry.view<Position>(Exclude<Frozen, Dead>{}).each(...);
+ * @endcode
+ *
+ * @tparam Xs Component types that disqualify an entity from iteration.
  */
-template <typename... Ts>
-class View
+template <typename... Xs>
+struct Exclude
+{
+};
+
+// =============================================================================
+// ViewImpl - internal implementation parameterised on include and exclude packs
+// =============================================================================
+
+template <typename IncludePack, typename ExcludePack>
+class ViewImpl;
+
+template <typename... Ts, typename... Xs>
+class ViewImpl<std::tuple<Ts...>, std::tuple<Xs...>>
 {
     static_assert(sizeof...(Ts) > 0, "View requires at least one component type");
 
 public:
-    explicit View(ComponentStore<Ts>*... stores)
-        : mStores(stores...)
+    // Include-only constructor (no exclusions).
+    explicit ViewImpl(ComponentStore<Ts>*... includeStores)
+        : mStores(includeStores...)
+        , mExcludeStores()
+    {
+    }
+
+    // Include + exclude constructor.
+    // Uses a struct tag to avoid overload ambiguity when Xs is empty.
+    struct WithExclude {};
+    explicit ViewImpl(WithExclude,
+                      std::tuple<ComponentStore<Ts>*...> includeStores,
+                      std::tuple<ComponentStore<Xs>*...> excludeStores)
+        : mStores(std::move(includeStores))
+        , mExcludeStores(std::move(excludeStores))
     {
     }
 
@@ -116,23 +162,30 @@ public:
             return 0;
         }
 
-        if constexpr (sizeof...(Ts) == 1)
+        std::size_t result = 0;
+        if constexpr (sizeof...(Ts) == 1 && sizeof...(Xs) == 0)
         {
+            // Fast path: single include, no exclusions.
             return std::get<0>(mStores)->size();
+        }
+        else if constexpr (sizeof...(Ts) == 1)
+        {
+            eachSingleComponentConst(
+                [&result](Entity, const Ts&...) { ++result; });
         }
         else
         {
-            std::size_t result = 0;
             eachMultiComponentConst([&result](Entity, const Ts&...) { ++result; });
-            return result;
         }
+        return result;
     }
 
 private:
     std::tuple<ComponentStore<Ts>*...> mStores;
+    std::tuple<ComponentStore<Xs>*...> mExcludeStores;
 
     // =========================================================================
-    // Null check
+    // Null check (include stores only)
     // =========================================================================
 
     [[nodiscard]] bool anyStoreNull() const noexcept
@@ -147,32 +200,130 @@ private:
     }
 
     // =========================================================================
+    // Exclude check — pre-cached raw pointer bundle
+    //
+    // A null exclude store means the type was never registered; no entity has
+    // it, so the check trivially passes (entity is not excluded).
+    // =========================================================================
+
+    struct ExcludeCache
+    {
+        const uint32_t* sparseData;
+        std::size_t     sparseSize;
+        const Entity*   denseData;
+        std::size_t     denseSize;
+        bool            isNull;
+
+        ExcludeCache() noexcept
+            : sparseData(nullptr), sparseSize(0)
+            , denseData(nullptr),  denseSize(0)
+            , isNull(true)
+        {
+        }
+
+        template <typename X>
+        explicit ExcludeCache(const ComponentStore<X>* store) noexcept
+            : sparseData(store ? store->sparsePtr()   : nullptr)
+            , sparseSize(store ? store->sparseCount() : 0)
+            , denseData (store ? store->densePtr()    : nullptr)
+            , denseSize (store ? store->denseCount()  : 0)
+            , isNull(store == nullptr)
+        {
+        }
+
+        // Returns true if entity IS present (entity should be excluded).
+        [[nodiscard]] bool has(Entity entity) const noexcept
+        {
+            if (isNull) return false;
+            const uint32_t sparseIdx = EntityIndex::index(entity);
+            if (sparseIdx >= sparseSize) return false;
+            const uint32_t denseIdx = sparseData[sparseIdx];
+            if (denseIdx >= denseSize) return false;
+            return denseData[denseIdx] == entity;
+        }
+    };
+
+    [[nodiscard]] auto buildExcludeCaches() const
+    {
+        return buildExcludeCachesImpl(std::index_sequence_for<Xs...>{});
+    }
+
+    template <std::size_t... Is>
+    [[nodiscard]] auto buildExcludeCachesImpl(std::index_sequence<Is...>) const
+    {
+        return std::make_tuple(
+            ExcludeCache(std::get<Is>(mExcludeStores))...);
+    }
+
+    template <typename ExcludeCaches>
+    [[nodiscard]] static bool entityIsExcludedCached(
+        Entity entity, const ExcludeCaches& caches) noexcept
+    {
+        return entityIsExcludedCachedImpl(
+            entity, caches, std::index_sequence_for<Xs...>{});
+    }
+
+    template <typename ExcludeCaches, std::size_t... Is>
+    [[nodiscard]] static bool entityIsExcludedCachedImpl(
+        Entity entity, const ExcludeCaches& caches,
+        std::index_sequence<Is...>) noexcept
+    {
+        return (std::get<Is>(caches).has(entity) || ...);
+    }
+
+    // =========================================================================
     // Single-component iteration
     // =========================================================================
 
     template <typename Func>
     void eachSingleComponent(Func&& func)
     {
-        auto* store = std::get<0>(mStores);
-        const Entity* ents = store->densePtr();
-        const std::size_t cnt = store->size();
+        auto*             store = std::get<0>(mStores);
+        const Entity*     ents  = store->densePtr();
+        const std::size_t cnt   = store->size();
 
-        for (std::size_t i = 0; i < cnt; ++i)
+        if constexpr (sizeof...(Xs) == 0)
         {
-            func(ents[i], store->dataAt(i));
+            for (std::size_t i = 0; i < cnt; ++i)
+            {
+                func(ents[i], store->dataAt(i));
+            }
+        }
+        else
+        {
+            auto excCaches = buildExcludeCaches();
+            for (std::size_t i = 0; i < cnt; ++i)
+            {
+                Entity entity = ents[i];
+                if (entityIsExcludedCached(entity, excCaches)) continue;
+                func(entity, store->dataAt(i));
+            }
         }
     }
 
     template <typename Func>
     void eachSingleComponentConst(Func&& func) const
     {
-        const auto* store = std::get<0>(mStores);
-        const Entity* ents = store->densePtr();
-        const std::size_t cnt = store->size();
+        const auto*       store = std::get<0>(mStores);
+        const Entity*     ents  = store->densePtr();
+        const std::size_t cnt   = store->size();
 
-        for (std::size_t i = 0; i < cnt; ++i)
+        if constexpr (sizeof...(Xs) == 0)
         {
-            func(ents[i], store->dataAt(i));
+            for (std::size_t i = 0; i < cnt; ++i)
+            {
+                func(ents[i], store->dataAt(i));
+            }
+        }
+        else
+        {
+            auto excCaches = buildExcludeCaches();
+            for (std::size_t i = 0; i < cnt; ++i)
+            {
+                Entity entity = ents[i];
+                if (entityIsExcludedCached(entity, excCaches)) continue;
+                func(entity, store->dataAt(i));
+            }
         }
     }
 
@@ -189,13 +340,10 @@ private:
     [[nodiscard]] std::size_t findSmallestImpl(std::index_sequence<Is...>) const
     {
         std::size_t sizes[] = {std::get<Is>(mStores)->size()...};
-        std::size_t minIdx = 0;
+        std::size_t minIdx  = 0;
         for (std::size_t i = 1; i < sizeof...(Ts); ++i)
         {
-            if (sizes[i] < sizes[minIdx])
-            {
-                minIdx = i;
-            }
+            if (sizes[i] < sizes[minIdx]) minIdx = i;
         }
         return minIdx;
     }
@@ -203,9 +351,6 @@ private:
     template <typename Func>
     void eachMultiComponent(Func&& func)
     {
-        // Fast path: all stores equal size — any pivot is equally good, always use 0.
-        // Eliminates the runtime pivot dispatch fold-expression from the hot path,
-        // which Clang struggled to optimize when sizes differ.
         if (allStoresSameSize())
         {
             eachWithPivot<0>(std::forward<Func>(func));
@@ -263,12 +408,7 @@ private:
     }
 
     // =========================================================================
-    // Pre-caching raw pointer bundle for non-pivot stores
-    //
-    // Loaded once before the loop. Clang/GCC keep these in registers because
-    // they are stack-local values that cannot alias any heap-allocated store
-    // data, eliminating the per-iteration metadata reloads of the previous
-    // has() + getUnchecked() implementation.
+    // Pre-caching raw pointer bundle for non-pivot include stores
     // =========================================================================
 
     template <std::size_t I>
@@ -290,8 +430,6 @@ private:
         {
         }
 
-        // Returns pointer to component if entity is present, nullptr otherwise.
-        // Single sparse array read — no second lookup needed.
         [[nodiscard]] T* tryGet(Entity entity) const noexcept
         {
             const uint32_t sparseIdx = EntityIndex::index(entity);
@@ -303,7 +441,6 @@ private:
         }
     };
 
-    // Const version for const iteration paths
     template <std::size_t I>
     struct NonPivotCacheConst
     {
@@ -335,29 +472,28 @@ private:
     };
 
     // =========================================================================
-    // eachWithPivot — the hot loop
-    //
-    // For the pivot store: iterate its dense array with dataAtUnchecked(i).
-    // For non-pivot stores: pre-cache raw pointers, probe via NonPivotCache.
+    // eachWithPivot - the hot loop
     // =========================================================================
 
     template <std::size_t PivotIdx, typename Func>
     void eachWithPivot(Func&& func)
     {
-        auto* pivotStore = std::get<PivotIdx>(mStores);
-        const Entity*   pivotEnts  = pivotStore->densePtr();
-        const std::size_t cnt      = pivotStore->denseCount();
+        auto*             pivotStore = std::get<PivotIdx>(mStores);
+        const Entity*     pivotEnts  = pivotStore->densePtr();
+        const std::size_t cnt        = pivotStore->denseCount();
         using PivotT = std::tuple_element_t<PivotIdx, std::tuple<Ts...>>;
-        PivotT* pivotData          = pivotStore->componentDataPtr();
+        PivotT*           pivotData  = pivotStore->componentDataPtr();
 
-        // Pre-cache raw pointers for all non-pivot stores (one load each, before loop).
-        auto caches = buildCaches<PivotIdx>(std::index_sequence_for<Ts...>{});
+        auto caches    = buildCaches<PivotIdx>(std::index_sequence_for<Ts...>{});
+        auto excCaches = buildExcludeCaches();
 
         for (std::size_t i = 0; i < cnt; ++i)
         {
             Entity entity = pivotEnts[i];
-            // Single-pass: tryGet() on each non-pivot cache, skip if any returns null.
-            // This avoids the previous allPresent()+invokeFunc() double-tryGet pattern.
+            if constexpr (sizeof...(Xs) > 0)
+            {
+                if (entityIsExcludedCached(entity, excCaches)) continue;
+            }
             invokeFuncIfPresent<PivotIdx>(std::forward<Func>(func), entity, i,
                                           pivotData, caches,
                                           std::index_sequence_for<Ts...>{});
@@ -367,17 +503,22 @@ private:
     template <std::size_t PivotIdx, typename Func>
     void eachWithPivotConst(Func&& func) const
     {
-        const auto* pivotStore = std::get<PivotIdx>(mStores);
-        const Entity*   pivotEnts  = pivotStore->densePtr();
-        const std::size_t cnt      = pivotStore->denseCount();
+        const auto*       pivotStore = std::get<PivotIdx>(mStores);
+        const Entity*     pivotEnts  = pivotStore->densePtr();
+        const std::size_t cnt        = pivotStore->denseCount();
         using PivotT = std::tuple_element_t<PivotIdx, std::tuple<Ts...>>;
-        const PivotT* pivotData    = pivotStore->componentDataPtr();
+        const PivotT*     pivotData  = pivotStore->componentDataPtr();
 
-        auto caches = buildCachesConst<PivotIdx>(std::index_sequence_for<Ts...>{});
+        auto caches    = buildCachesConst<PivotIdx>(std::index_sequence_for<Ts...>{});
+        auto excCaches = buildExcludeCaches();
 
         for (std::size_t i = 0; i < cnt; ++i)
         {
             Entity entity = pivotEnts[i];
+            if constexpr (sizeof...(Xs) > 0)
+            {
+                if (entityIsExcludedCached(entity, excCaches)) continue;
+            }
             invokeFuncIfPresentConst<PivotIdx>(std::forward<Func>(func), entity, i,
                                                pivotData, caches,
                                                std::index_sequence_for<Ts...>{});
@@ -385,62 +526,41 @@ private:
     }
 
     // =========================================================================
-    // Cache construction (before the loop)
+    // Cache construction
     // =========================================================================
 
-    // Build a tuple of NonPivotCache for each non-pivot index; nullptr_t for pivot.
     template <std::size_t PivotIdx, std::size_t... Is>
     auto buildCaches(std::index_sequence<Is...>)
     {
-        return std::make_tuple(
-            buildCacheForIndex<PivotIdx, Is>()...
-        );
+        return std::make_tuple(buildCacheForIndex<PivotIdx, Is>()...);
     }
 
     template <std::size_t PivotIdx, std::size_t I>
     auto buildCacheForIndex()
     {
         if constexpr (I == PivotIdx)
-        {
             return std::nullptr_t{};
-        }
         else
-        {
             return NonPivotCache<I>(std::get<I>(mStores));
-        }
     }
 
     template <std::size_t PivotIdx, std::size_t... Is>
     auto buildCachesConst(std::index_sequence<Is...>) const
     {
-        return std::make_tuple(
-            buildCacheForIndexConst<PivotIdx, Is>()...
-        );
+        return std::make_tuple(buildCacheForIndexConst<PivotIdx, Is>()...);
     }
 
     template <std::size_t PivotIdx, std::size_t I>
     auto buildCacheForIndexConst() const
     {
         if constexpr (I == PivotIdx)
-        {
             return std::nullptr_t{};
-        }
         else
-        {
             return NonPivotCacheConst<I>(std::get<I>(mStores));
-        }
     }
 
     // =========================================================================
     // Per-entity combined lookup and invocation
-    //
-    // invokeFuncIfPresent calls tryGet() once per non-pivot store. If any
-    // returns nullptr the entity is skipped. Otherwise func is called with
-    // the cached pointer values — no second tryGet() needed.
-    //
-    // We use a flat "get-then-check" structure rather than fold expressions
-    // so each tryGet() result is stored in a local variable and reused for
-    // the func call, avoiding redundant sparse lookups.
     // =========================================================================
 
     template <std::size_t PivotIdx, typename Func, typename PivotT,
@@ -449,13 +569,9 @@ private:
                              PivotT* pivotData, Caches& caches,
                              std::index_sequence<Is...>)
     {
-        // Retrieve a typed pointer for each component position.
-        // Pivot: address from pre-fetched pivotData array (no lookup).
-        // Non-pivot: tryGet() from the pre-cached NonPivotCache (one sparse read).
         auto ptrTuple = std::make_tuple(
             getPtr<PivotIdx, Is>(entity, denseIdx, pivotData, caches)...);
 
-        // Skip entity if any non-pivot pointer is null.
         if (!((Is == PivotIdx || std::get<Is>(ptrTuple) != nullptr) && ...))
             return;
 
@@ -477,23 +593,15 @@ private:
         func(entity, *std::get<Is>(ptrTuple)...);
     }
 
-    // getPtr<PivotIdx, I>: returns T* for component at index I.
-    // For the pivot, returns pivotData[denseIdx]. For others, calls tryGet().
-    // Return type is always non-const T* regardless of whether I==PivotIdx,
-    // so the tuple element type is uniform within each component position.
     template <std::size_t PivotIdx, std::size_t I, typename PivotT, typename Caches>
     [[nodiscard]] auto* getPtr(Entity entity, std::size_t denseIdx,
                                PivotT* pivotData, Caches& caches) noexcept
     {
         using ElemT = std::tuple_element_t<I, std::tuple<Ts...>>;
         if constexpr (I == PivotIdx)
-        {
             return static_cast<ElemT*>(&pivotData[denseIdx]);
-        }
         else
-        {
             return std::get<I>(caches).tryGet(entity);
-        }
     }
 
     template <std::size_t PivotIdx, std::size_t I, typename PivotT, typename Caches>
@@ -503,14 +611,17 @@ private:
     {
         using ElemT = std::tuple_element_t<I, std::tuple<Ts...>>;
         if constexpr (I == PivotIdx)
-        {
             return static_cast<const ElemT*>(&pivotData[denseIdx]);
-        }
         else
-        {
             return std::get<I>(caches).tryGet(entity);
-        }
     }
 };
+
+// =============================================================================
+// View - public alias (include-only, no exclusions)
+// =============================================================================
+
+template <typename... Ts>
+using View = ViewImpl<std::tuple<Ts...>, std::tuple<>>;
 
 } // namespace fatp_ecs

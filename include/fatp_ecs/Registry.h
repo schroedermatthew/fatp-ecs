@@ -249,10 +249,23 @@ public:
     // Views
     // =========================================================================
 
+    /// @brief Create a view that iterates entities with all of Ts.
     template <typename... Ts>
     [[nodiscard]] View<Ts...> view()
     {
         return View<Ts...>(getOrNullStore<Ts>()...);
+    }
+
+    /// @brief Create a view that iterates entities with all of Ts and none of Xs.
+    /// @example registry.view<Position, Velocity>(Exclude<Frozen>{})
+    template <typename... Ts, typename... Xs>
+    [[nodiscard]] ViewImpl<std::tuple<Ts...>, std::tuple<Xs...>>
+    view(Exclude<Xs...> /*tag*/)
+    {
+        using V = ViewImpl<std::tuple<Ts...>, std::tuple<Xs...>>;
+        return V(typename V::WithExclude{},
+                 std::make_tuple(getOrNullStore<Ts>()...),
+                 std::make_tuple(getOrNullStore<Xs>()...));
     }
 
     // =========================================================================

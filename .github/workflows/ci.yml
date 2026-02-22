@@ -5,7 +5,7 @@
 #
 # Directory structure:
 #   Headers:    include/fatp_ecs/*.h
-#   Tests:      tests/test_ecs.cpp, test_ecs_phase2.cpp, test_ecs_phase3.cpp, test_clear.cpp
+#   Tests:      tests/test_ecs.cpp, test_ecs_phase2.cpp, test_ecs_phase3.cpp, test_clear.cpp, test_exclude_filters.cpp
 #   Bench:      bench/benchmark.cpp (separate workflow: benchmarks.yml)
 #   Demo:       demo/main.cpp
 #
