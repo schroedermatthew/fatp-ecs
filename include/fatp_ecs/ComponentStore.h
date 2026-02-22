@@ -232,6 +232,51 @@ public:
         return mStorage;
     }
 
+    // =========================================================================
+    // Raw-pointer accessors for View iteration pre-caching
+    //
+    // View::eachWithPivot loads these into local variables before the hot loop.
+    // Working with raw stack-local pointers eliminates Clang's conservative
+    // per-iteration reloads of the SparseSetWithData's internal vector metadata
+    // (data pointer, size), which it cannot hoist when they are accessed through
+    // the ComponentStore pointer due to potential aliasing with loop body writes.
+    // =========================================================================
+
+    /// @brief Raw pointer to the dense entity array. Valid until next add/remove.
+    [[nodiscard]] const Entity* densePtr() const noexcept
+    {
+        return mStorage.dense().data();
+    }
+
+    /// @brief Number of entries in the dense array (== size()).
+    [[nodiscard]] std::size_t denseCount() const noexcept
+    {
+        return mStorage.dense().size();
+    }
+
+    /// @brief Raw pointer to the sparse index array. Valid until next add/remove.
+    [[nodiscard]] const uint32_t* sparsePtr() const noexcept
+    {
+        return mStorage.sparse().data();
+    }
+
+    /// @brief Number of entries in the sparse array (capacity, not entity count).
+    [[nodiscard]] std::size_t sparseCount() const noexcept
+    {
+        return mStorage.sparse().size();
+    }
+
+    /// @brief Raw pointer to the component data array. Valid until next add/remove.
+    [[nodiscard]] T* componentDataPtr() noexcept
+    {
+        return mStorage.data().data();
+    }
+
+    [[nodiscard]] const T* componentDataPtr() const noexcept
+    {
+        return mStorage.data().data();
+    }
+
 private:
     StorageType mStorage;
 };
