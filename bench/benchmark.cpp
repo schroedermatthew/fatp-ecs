@@ -154,6 +154,10 @@ void section1_Create(BenchmarkRunner& runner)
 
         roundRobinCompare(runner, "N=" + std::to_string(N),
             {"fatp_ecs", "entt-32", "entt-64"},
+            {
+                [&] { fReg = std::make_unique<fatp_ecs::Registry>(); },
+                [&] { e32Reg = std::make_unique<entt::registry>(); },
+                [&] { e64Reg = std::make_unique<entt::basic_registry<uint64_t>>(); },
             },
             {
                 [&] { for (std::size_t i = 0; i < N; ++i) snk(fReg->create().get()); },
@@ -184,6 +188,10 @@ void section2_Destroy(BenchmarkRunner& runner)
 
         roundRobinCompare(runner, "N=" + std::to_string(N),
             {"fatp_ecs", "entt-32", "entt-64"},
+            {
+                [&] { fReg = std::make_unique<fatp_ecs::Registry>(); fEnts.resize(N); for (std::size_t i = 0; i < N; ++i) fEnts[i] = fReg->create(); },
+                [&] { e32Reg = std::make_unique<entt::registry>(); e32Ents.resize(N); for (std::size_t i = 0; i < N; ++i) e32Ents[i] = e32Reg->create(); },
+                [&] { e64Reg = std::make_unique<entt::basic_registry<uint64_t>>(); e64Ents.resize(N); for (std::size_t i = 0; i < N; ++i) e64Ents[i] = e64Reg->create(); },
             },
             {
                 [&] { for (auto e : fEnts) fReg->destroy(e); },
@@ -214,6 +222,10 @@ void section3_Add1(BenchmarkRunner& runner)
 
         roundRobinCompare(runner, "N=" + std::to_string(N),
             {"fatp_ecs", "entt-32", "entt-64"},
+            {
+                [&] { fReg = std::make_unique<fatp_ecs::Registry>(); fEnts.resize(N); for (std::size_t i = 0; i < N; ++i) fEnts[i] = fReg->create(); },
+                [&] { e32Reg = std::make_unique<entt::registry>(); e32Ents.resize(N); for (std::size_t i = 0; i < N; ++i) e32Ents[i] = e32Reg->create(); },
+                [&] { e64Reg = std::make_unique<entt::basic_registry<uint64_t>>(); e64Ents.resize(N); for (std::size_t i = 0; i < N; ++i) e64Ents[i] = e64Reg->create(); },
             },
             {
                 [&] { for (auto e : fEnts) fReg->add<Position>(e, 1.0f, 2.0f); },
@@ -244,6 +256,10 @@ void section4_Add3(BenchmarkRunner& runner)
 
         roundRobinCompare(runner, "N=" + std::to_string(N),
             {"fatp_ecs", "entt-32", "entt-64"},
+            {
+                [&] { fReg = std::make_unique<fatp_ecs::Registry>(); fEnts.resize(N); for (std::size_t i = 0; i < N; ++i) fEnts[i] = fReg->create(); },
+                [&] { e32Reg = std::make_unique<entt::registry>(); e32Ents.resize(N); for (std::size_t i = 0; i < N; ++i) e32Ents[i] = e32Reg->create(); },
+                [&] { e64Reg = std::make_unique<entt::basic_registry<uint64_t>>(); e64Ents.resize(N); for (std::size_t i = 0; i < N; ++i) e64Ents[i] = e64Reg->create(); },
             },
             {
                 [&] { for (auto e : fEnts) { fReg->add<Position>(e, 1.f, 2.f); fReg->add<Velocity>(e, 3.f, 4.f); fReg->add<Health>(e, 100, 100); } },
@@ -274,6 +290,10 @@ void section5_Remove(BenchmarkRunner& runner)
 
         roundRobinCompare(runner, "N=" + std::to_string(N),
             {"fatp_ecs", "entt-32", "entt-64"},
+            {
+                [&] { fReg = std::make_unique<fatp_ecs::Registry>(); fEnts.resize(N); for (std::size_t i = 0; i < N; ++i) { fEnts[i] = fReg->create(); fReg->add<Position>(fEnts[i], 1.f, 2.f); } },
+                [&] { e32Reg = std::make_unique<entt::registry>(); e32Ents.resize(N); for (std::size_t i = 0; i < N; ++i) { e32Ents[i] = e32Reg->create(); e32Reg->emplace<Position>(e32Ents[i], 1.f, 2.f); } },
+                [&] { e64Reg = std::make_unique<entt::basic_registry<uint64_t>>(); e64Ents.resize(N); for (std::size_t i = 0; i < N; ++i) { e64Ents[i] = e64Reg->create(); e64Reg->emplace<Position>(e64Ents[i], 1.f, 2.f); } },
             },
             {
                 [&] { for (auto e : fEnts) fReg->remove<Position>(e); },
@@ -304,6 +324,10 @@ void section6_Get(BenchmarkRunner& runner)
 
         roundRobinCompare(runner, "N=" + std::to_string(N),
             {"fatp_ecs", "entt-32", "entt-64"},
+            {
+                [&] { fReg = std::make_unique<fatp_ecs::Registry>(); fEnts.resize(N); for (std::size_t i = 0; i < N; ++i) { fEnts[i] = fReg->create(); fReg->add<Position>(fEnts[i], 1.f, 2.f); } },
+                [&] { e32Reg = std::make_unique<entt::registry>(); e32Ents.resize(N); for (std::size_t i = 0; i < N; ++i) { e32Ents[i] = e32Reg->create(); e32Reg->emplace<Position>(e32Ents[i], 1.f, 2.f); } },
+                [&] { e64Reg = std::make_unique<entt::basic_registry<uint64_t>>(); e64Ents.resize(N); for (std::size_t i = 0; i < N; ++i) { e64Ents[i] = e64Reg->create(); e64Reg->emplace<Position>(e64Ents[i], 1.f, 2.f); } },
             },
             {
                 [&] { for (auto e : fEnts) { auto& p = fReg->get<Position>(e); snk(p.x); } },
@@ -331,6 +355,10 @@ void section7_Iter1(BenchmarkRunner& runner)
 
         roundRobinCompare(runner, "N=" + std::to_string(N),
             {"fatp_ecs", "entt-32", "entt-64"},
+            {
+                [&] { fReg = std::make_unique<fatp_ecs::Registry>(); for (std::size_t i = 0; i < N; ++i) { auto e = fReg->create(); fReg->add<Position>(e, 1.f, 2.f); } },
+                [&] { e32Reg = std::make_unique<entt::registry>(); for (std::size_t i = 0; i < N; ++i) { auto e = e32Reg->create(); e32Reg->emplace<Position>(e, 1.f, 2.f); } },
+                [&] { e64Reg = std::make_unique<entt::basic_registry<uint64_t>>(); for (std::size_t i = 0; i < N; ++i) { auto e = e64Reg->create(); e64Reg->emplace<Position>(e, 1.f, 2.f); } },
             },
             {
                 [&] { fReg->view<Position>().each([](fatp_ecs::Entity, Position& p) { p.x += 1.0f; snk(p.x); }); },
@@ -358,6 +386,10 @@ void section8_Iter2(BenchmarkRunner& runner)
 
         roundRobinCompare(runner, "N=" + std::to_string(N),
             {"fatp_ecs", "entt-32", "entt-64"},
+            {
+                [&] { fReg = std::make_unique<fatp_ecs::Registry>(); for (std::size_t i = 0; i < N; ++i) { auto e = fReg->create(); fReg->add<Position>(e, 1.f, 2.f); fReg->add<Velocity>(e, 0.1f, 0.2f); } },
+                [&] { e32Reg = std::make_unique<entt::registry>(); for (std::size_t i = 0; i < N; ++i) { auto e = e32Reg->create(); e32Reg->emplace<Position>(e, 1.f, 2.f); e32Reg->emplace<Velocity>(e, 0.1f, 0.2f); } },
+                [&] { e64Reg = std::make_unique<entt::basic_registry<uint64_t>>(); for (std::size_t i = 0; i < N; ++i) { auto e = e64Reg->create(); e64Reg->emplace<Position>(e, 1.f, 2.f); e64Reg->emplace<Velocity>(e, 0.1f, 0.2f); } },
             },
             {
                 [&] { fReg->view<Position, Velocity>().each([](fatp_ecs::Entity, Position& p, Velocity& v) { p.x += v.dx; p.y += v.dy; snk(p.x); }); },
@@ -385,8 +417,38 @@ void section9_Sparse(BenchmarkRunner& runner)
 
         roundRobinCompare(runner, "N=" + std::to_string(N),
             {"fatp_ecs", "entt-32", "entt-64"},
+            {
+                [&] {
+                    fReg = std::make_unique<fatp_ecs::Registry>();
+                    for (std::size_t i = 0; i < N; ++i) {
+                        auto e = fReg->create();
+                        fReg->add<Position>(e, 1.f, 2.f);
+                        if (i % 2 == 0) fReg->add<Velocity>(e, 0.1f, 0.2f);
+                    }
+                },
+                [&] {
+                    e32Reg = std::make_unique<entt::registry>();
+                    for (std::size_t i = 0; i < N; ++i) {
+                        auto e = e32Reg->create();
+                        e32Reg->emplace<Position>(e, 1.f, 2.f);
+                        if (i % 2 == 0) e32Reg->emplace<Velocity>(e, 0.1f, 0.2f);
+                    }
+                },
+                [&] {
+                    e64Reg = std::make_unique<entt::basic_registry<uint64_t>>();
+                    for (std::size_t i = 0; i < N; ++i) {
+                        auto e = e64Reg->create();
+                        e64Reg->emplace<Position>(e, 1.f, 2.f);
+                        if (i % 2 == 0) e64Reg->emplace<Velocity>(e, 0.1f, 0.2f);
+                    }
+                },
             },
-            N / 2); // N/2 entities have both components
+            {
+                [&] { fReg->view<Position, Velocity>().each([](fatp_ecs::Entity, Position& p, Velocity& v) { p.x += v.dx; snk(p.x); }); },
+                [&] { e32Reg->view<Position, Velocity>().each([](auto, Position& p, Velocity& v) { p.x += v.dx; snk(p.x); }); },
+                [&] { e64Reg->view<Position, Velocity>().each([](auto, Position& p, Velocity& v) { p.x += v.dx; snk(p.x); }); },
+            },
+            N / 2);
     }
 }
 
@@ -407,6 +469,10 @@ void section10_Iter3(BenchmarkRunner& runner)
 
         roundRobinCompare(runner, "N=" + std::to_string(N),
             {"fatp_ecs", "entt-32", "entt-64"},
+            {
+                [&] { fReg = std::make_unique<fatp_ecs::Registry>(); for (std::size_t i = 0; i < N; ++i) { auto e = fReg->create(); fReg->add<Position>(e, 1.f, 2.f); fReg->add<Velocity>(e, 0.1f, 0.2f); fReg->add<Health>(e, 100, 100); } },
+                [&] { e32Reg = std::make_unique<entt::registry>(); for (std::size_t i = 0; i < N; ++i) { auto e = e32Reg->create(); e32Reg->emplace<Position>(e, 1.f, 2.f); e32Reg->emplace<Velocity>(e, 0.1f, 0.2f); e32Reg->emplace<Health>(e, 100, 100); } },
+                [&] { e64Reg = std::make_unique<entt::basic_registry<uint64_t>>(); for (std::size_t i = 0; i < N; ++i) { auto e = e64Reg->create(); e64Reg->emplace<Position>(e, 1.f, 2.f); e64Reg->emplace<Velocity>(e, 0.1f, 0.2f); e64Reg->emplace<Health>(e, 100, 100); } },
             },
             {
                 [&] { fReg->view<Position, Velocity, Health>().each([](fatp_ecs::Entity, Position& p, Velocity& v, Health& h) { p.x += v.dx; h.hp -= 1; snk(p.x); snk(h.hp); }); },
@@ -434,6 +500,30 @@ void section11_Frag(BenchmarkRunner& runner)
 
         roundRobinCompare(runner, "N=" + std::to_string(N),
             {"fatp_ecs", "entt-32", "entt-64"},
+            {
+                [&] {
+                    fReg = std::make_unique<fatp_ecs::Registry>();
+                    std::vector<fatp_ecs::Entity> tmp(2 * N);
+                    for (std::size_t i = 0; i < 2 * N; ++i) { tmp[i] = fReg->create(); fReg->add<Position>(tmp[i], 1.f, 2.f); }
+                    for (std::size_t i = 1; i < 2 * N; i += 2) fReg->destroy(tmp[i]);
+                },
+                [&] {
+                    e32Reg = std::make_unique<entt::registry>();
+                    std::vector<entt::entity> tmp(2 * N);
+                    for (std::size_t i = 0; i < 2 * N; ++i) { tmp[i] = e32Reg->create(); e32Reg->emplace<Position>(tmp[i], 1.f, 2.f); }
+                    for (std::size_t i = 1; i < 2 * N; i += 2) e32Reg->destroy(tmp[i]);
+                },
+                [&] {
+                    e64Reg = std::make_unique<entt::basic_registry<uint64_t>>();
+                    std::vector<uint64_t> tmp(2 * N);
+                    for (std::size_t i = 0; i < 2 * N; ++i) { tmp[i] = e64Reg->create(); e64Reg->emplace<Position>(tmp[i], 1.f, 2.f); }
+                    for (std::size_t i = 1; i < 2 * N; i += 2) e64Reg->destroy(tmp[i]);
+                },
+            },
+            {
+                [&] { fReg->view<Position>().each([](fatp_ecs::Entity, Position& p) { p.x += 1.0f; snk(p.x); }); },
+                [&] { e32Reg->view<Position>().each([](auto, Position& p) { p.x += 1.0f; snk(p.x); }); },
+                [&] { e64Reg->view<Position>().each([](auto, Position& p) { p.x += 1.0f; snk(p.x); }); },
             },
             N);
     }
@@ -459,6 +549,10 @@ void section12_Churn(BenchmarkRunner& runner)
 
         roundRobinCompare(runner, "N=" + std::to_string(N),
             {"fatp_ecs", "entt-32", "entt-64"},
+            {
+                [&] { fReg = std::make_unique<fatp_ecs::Registry>(); fEnts.resize(N); for (std::size_t i = 0; i < N; ++i) fEnts[i] = fReg->create(); },
+                [&] { e32Reg = std::make_unique<entt::registry>(); e32Ents.resize(N); for (std::size_t i = 0; i < N; ++i) e32Ents[i] = e32Reg->create(); },
+                [&] { e64Reg = std::make_unique<entt::basic_registry<uint64_t>>(); e64Ents.resize(N); for (std::size_t i = 0; i < N; ++i) e64Ents[i] = e64Reg->create(); },
             },
             {
                 [&] { for (std::size_t i = 0; i < N; ++i) { auto e = fReg->create(); fReg->destroy(fEnts[i]); fEnts[i] = e; } },
