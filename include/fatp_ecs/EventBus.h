@@ -11,9 +11,10 @@
 // - FastHashMap: Type-erased storage for per-component-type signals
 //
 // Entity signals (onEntityCreated, onEntityDestroyed) are direct members.
-// Component signals (onComponentAdded<T>, onComponentRemoved<T>) are stored
-// type-erased in a FastHashMap keyed by TypeId, lazily created on first
-// listener connection to avoid overhead for unobserved component types.
+// Component signals (onComponentAdded<T>, onComponentRemoved<T>,
+// onComponentUpdated<T>) are stored type-erased in a FastHashMap keyed by
+// TypeId, lazily created on first listener connection to avoid overhead for
+// unobserved component types.
 
 #include <cstdint>
 #include <memory>
@@ -53,7 +54,8 @@ class ComponentSignalPair : public IComponentSignalPair
 {
 public:
     fat_p::Signal<void(Entity, T&)> onAdded;
-    fat_p::Signal<void(Entity)> onRemoved;
+    fat_p::Signal<void(Entity, T&)> onUpdated;
+    fat_p::Signal<void(Entity)>     onRemoved;
 };
 
 // =============================================================================
@@ -115,6 +117,21 @@ public:
         return ensureSignalPair<T>()->onRemoved;
     }
 
+    /**
+     * @brief Returns the onComponentUpdated signal for type T.
+     *
+     * Fired by Registry::patch<T>() after the component has been modified
+     * in-place. Signature: void(Entity, T&).
+     *
+     * @tparam T The component type.
+     * @return Reference to the signal. Created lazily if needed.
+     */
+    template <typename T>
+    fat_p::Signal<void(Entity, T&)>& onComponentUpdated()
+    {
+        return ensureSignalPair<T>()->onUpdated;
+    }
+
     // =========================================================================
     // Internal: Emit Helpers (called by Registry)
     // =========================================================================
@@ -138,6 +155,17 @@ public:
         if (pair != nullptr)
         {
             pair->onRemoved.emit(entity);
+        }
+    }
+
+    /// @brief Emit component-updated event if listeners exist for type T.
+    template <typename T>
+    void emitComponentUpdated(Entity entity, T& component)
+    {
+        auto* pair = getSignalPair<T>();
+        if (pair != nullptr)
+        {
+            pair->onUpdated.emit(entity, component);
         }
     }
 

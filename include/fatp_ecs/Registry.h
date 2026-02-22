@@ -165,6 +165,83 @@ public:
         return store->remove(entity);
     }
 
+    /**
+     * @brief Modify a component in-place and fire onComponentUpdated.
+     *
+     * Calls func(T&) on the existing component, then emits the
+     * onComponentUpdated signal. If the entity does not have T, returns
+     * false and func is not called.
+     *
+     * @tparam T    Component type to patch.
+     * @tparam Func Callable with signature void(T&) or compatible.
+     * @param entity The entity whose component to modify.
+     * @param func   Modifier function applied to the component.
+     * @return true if the entity had T and func was called; false otherwise.
+     *
+     * @note Thread-safety: NOT thread-safe. Use Scheduler or CommandBuffer
+     *       for deferred patching from parallel contexts.
+     *
+     * @example
+     * @code
+     *   registry.patch<Health>(player, [](Health& h) { h.hp -= 10; });
+     * @endcode
+     */
+    template <typename T, typename Func>
+    bool patch(Entity entity, Func&& func)
+    {
+        auto* store = getStore<T>();
+        if (store == nullptr)
+        {
+            return false;
+        }
+
+        T* component = store->tryGet(entity);
+        if (component == nullptr)
+        {
+            return false;
+        }
+
+        std::forward<Func>(func)(*component);
+        mEvents.emitComponentUpdated<T>(entity, *component);
+        return true;
+    }
+
+    /**
+     * @brief Fire onComponentUpdated for an existing component without modifying it.
+     *
+     * Useful for marking a component dirty after external modification via get().
+     * If the entity does not have T, returns false.
+     *
+     * @tparam T Component type to signal as updated.
+     * @param entity The entity whose component to signal.
+     * @return true if the entity had T; false otherwise.
+     *
+     * @example
+     * @code
+     *   auto& pos = registry.get<Position>(player);
+     *   pos.x += vel.dx;  // Direct modification via get()
+     *   registry.patch<Position>(player); // Notify observers
+     * @endcode
+     */
+    template <typename T>
+    bool patch(Entity entity)
+    {
+        auto* store = getStore<T>();
+        if (store == nullptr)
+        {
+            return false;
+        }
+
+        T* component = store->tryGet(entity);
+        if (component == nullptr)
+        {
+            return false;
+        }
+
+        mEvents.emitComponentUpdated<T>(entity, *component);
+        return true;
+    }
+
     template <typename T>
     [[nodiscard]] bool has(Entity entity) const
     {
