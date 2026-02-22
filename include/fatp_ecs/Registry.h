@@ -15,6 +15,7 @@
 // - BitSet: Component masks (via ComponentMask.h)
 
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -30,6 +31,7 @@
 #include "Entity.h"
 #include "EventBus.h"
 #include "Observer.h"
+#include "OwningGroup.h"
 #include "RuntimeView.h"
 #include "TypeId.h"
 #include "View.h"
@@ -93,7 +95,7 @@ public:
 
         for (auto it = mStores.begin(); it != mStores.end(); ++it)
         {
-            it.value()->remove(entity);
+            it.value()->removeAndNotify(entity, mEvents);
         }
 
         EntityHandle handle{EntityTraits::index(entity),
@@ -445,6 +447,62 @@ public:
     }
 
     // =========================================================================
+    // Owning Groups
+    // =========================================================================
+
+    /**
+     * @brief Create (or retrieve) an owning group over the given component types.
+     *
+     * An owning group maintains a contiguous prefix in each owned store's
+     * dense array, so that group::each() can walk all component arrays
+     * simultaneously with zero sparse lookups — pure sequential array access.
+     *
+     * @tparam Ts Owned component types (must be 2 or more).
+     *
+     * @return Reference to the OwningGroup. The Registry owns the group's
+     *         lifetime; callers may hold the reference as long as the
+     *         Registry is alive.
+     *
+     * @note Each component type may be owned by at most one group per Registry.
+     *       Calling group<A, B>() and group<A, C>() on the same Registry will
+     *       assert in debug builds and is undefined behaviour in release builds.
+     *
+     * @example
+     * @code
+     *   auto& grp = registry.group<Position, Velocity>();
+     *
+     *   grp.each([](Entity e, Position& p, Velocity& v) {
+     *       p.x += v.dx;
+     *       p.y += v.dy;
+     *   });
+     * @endcode
+     */
+    template <typename... Ts>
+    [[nodiscard]] OwningGroup<Ts...>& group()
+    {
+        const TypeId key = groupKey<Ts...>();
+
+        auto* existing = mGroups.find(key);
+        if (existing != nullptr)
+        {
+            return *static_cast<OwningGroup<Ts...>*>(existing->get());
+        }
+
+        // Assert no ownership conflicts (each TypeId used by at most one group).
+        assertNoOwnershipConflicts<Ts...>();
+
+        // Mark each type as owned.
+        (markOwned(typeId<Ts>()), ...);
+
+        // Create the group.
+        auto grp = std::make_unique<OwningGroup<Ts...>>(
+            ensureStore<Ts>()..., mEvents);
+        auto* raw = static_cast<OwningGroup<Ts...>*>(grp.get());
+        mGroups.insert(key, std::move(grp));
+        return *raw;
+    }
+
+    // =========================================================================
     // Bulk Operations
     // =========================================================================
 
@@ -577,25 +635,38 @@ private:
         obs.connectUpdated<T>(mEvents);
     }
 
-    /// @brief Type-erased store lookup by TypeId. Returns nullptr if the type
-    ///        has never been registered. Used by runtimeView().
-    [[nodiscard]] IComponentStore* getStoreById(TypeId tid) noexcept
+    // =========================================================================
+    // Group helpers
+    // =========================================================================
+
+    /// @brief Stable composite key for a group's type set.
+    /// Combines all TypeIds into a single hash. Uses XOR + rotation to be
+    /// order-independent within reasonable assumptions (group<A,B> == group<B,A>
+    /// is not required — same order required at call site, matching EnTT).
+    template <typename... Ts>
+    TypeId groupKey()
     {
-        if (tid < kStoreCacheSize && mStoreCache[tid] != nullptr)
-        {
-            return mStoreCache[tid];
-        }
-        auto* val = mStores.find(tid);
-        if (val == nullptr)
-        {
-            return nullptr;
-        }
-        auto* raw = val->get();
-        if (tid < kStoreCacheSize)
-        {
-            mStoreCache[tid] = raw;
-        }
-        return raw;
+        // FNV-1a-inspired fold over TypeIds, order-dependent.
+        TypeId key = 0xcbf29ce484222325ULL;
+        ((key = (key ^ typeId<Ts>()) * 0x100000001b3ULL), ...);
+        return key;
+    }
+
+    void markOwned(TypeId tid)
+    {
+        mOwnedTypes.insert(tid, true);
+    }
+
+    template <typename... Ts>
+    void assertNoOwnershipConflicts()
+    {
+        (assertNotOwned(typeId<Ts>()), ...);
+    }
+
+    void assertNotOwned([[maybe_unused]] TypeId tid)
+    {
+        assert(mOwnedTypes.find(tid) == nullptr &&
+               "OwningGroup: component type already owned by another group");
     }
 
     // =========================================================================
@@ -615,6 +686,35 @@ private:
 
     /// @brief Flat array cache for O(1) component store lookup by TypeId.
     std::array<IComponentStore*, kStoreCacheSize> mStoreCache{};
+
+    /// @brief Type-erased owning groups, keyed by group signature hash.
+    fat_p::FastHashMap<TypeId, std::unique_ptr<IOwningGroup>> mGroups;
+
+    /// @brief TypeIds claimed by an owning group — for conflict detection.
+    fat_p::FastHashMap<TypeId, bool> mOwnedTypes;
+
+    // =========================================================================
+    // Store lookup by TypeId (used by runtimeView())
+    // =========================================================================
+
+    [[nodiscard]] IComponentStore* getStoreById(TypeId tid) noexcept
+    {
+        if (tid < kStoreCacheSize && mStoreCache[tid] != nullptr)
+        {
+            return mStoreCache[tid];
+        }
+        auto* val = mStores.find(tid);
+        if (val == nullptr)
+        {
+            return nullptr;
+        }
+        auto* raw = val->get();
+        if (tid < kStoreCacheSize)
+        {
+            mStoreCache[tid] = raw;
+        }
+        return raw;
+    }
 };
 
 } // namespace fatp_ecs

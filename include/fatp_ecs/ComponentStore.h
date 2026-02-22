@@ -15,14 +15,17 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include <fat_p/SparseSet.h>
 
 #include "Entity.h"
+#include "EventBus.h"
 
 namespace fatp_ecs
 {
+// (EventBus is fully defined via the include above)
 
 // =============================================================================
 // IComponentStore - Type-Erased Interface
@@ -36,6 +39,11 @@ public:
 
     [[nodiscard]] virtual bool has(Entity entity) const noexcept = 0;
     virtual bool remove(Entity entity) = 0;
+
+    /// @brief Remove entity and fire onComponentRemoved signal via the EventBus.
+    ///        Used by Registry::destroy() so groups and observers are notified.
+    virtual bool removeAndNotify(Entity entity, EventBus& events) = 0;
+
     [[nodiscard]] virtual std::size_t size() const noexcept = 0;
     [[nodiscard]] virtual bool empty() const noexcept = 0;
     virtual void clear() = 0;
@@ -90,6 +98,16 @@ public:
 
     bool remove(Entity entity) override
     {
+        return mStorage.erase(entity);
+    }
+
+    bool removeAndNotify(Entity entity, EventBus& events) override
+    {
+        if (!mStorage.contains(entity))
+        {
+            return false;
+        }
+        events.emitComponentRemoved<T>(entity);
         return mStorage.erase(entity);
     }
 
@@ -247,6 +265,63 @@ public:
     [[nodiscard]] const StorageType& storage() const noexcept
     {
         return mStorage;
+    }
+
+    /// @brief Returns the dense entity array. Used by OwningGroup to reorder entries.
+    [[nodiscard]] std::vector<Entity>& mutableDense() noexcept
+    {
+        return const_cast<std::vector<Entity>&>(mStorage.dense());
+    }
+
+    // =========================================================================
+    // Group support: in-place dense array reordering
+    //
+    // OwningGroup maintains a contiguous prefix [0, groupSize) in each owned
+    // store where all group entities are packed. These two primitives are the
+    // only operations needed to maintain that invariant.
+    // =========================================================================
+
+    /**
+     * @brief Returns the dense index of entity, or size() if not present.
+     */
+    [[nodiscard]] std::size_t getDenseIndex(Entity entity) const noexcept
+    {
+        const auto sparseIdx = EntityIndex::index(entity);
+        const auto& sp = mStorage.sparse();
+        if (sparseIdx >= sp.size())
+        {
+            return mStorage.size(); // sentinel: not present
+        }
+        const std::size_t di = sp[sparseIdx];
+        // Validate: the dense slot must point back to this entity.
+        if (di >= mStorage.dense().size() ||
+            EntityIndex::index(mStorage.dense()[di]) != sparseIdx)
+        {
+            return mStorage.size();
+        }
+        return di;
+    }
+
+    /**
+     * @brief Swap the entities at dense positions i and j in-place.
+     *
+     * Updates both dense[] and data[] arrays, and patches the two sparse
+     * entries so lookups remain correct.
+     *
+     * @pre i < size() && j < size()
+     */
+    void swapDenseEntries(std::size_t i, std::size_t j) noexcept
+    {
+        if (i == j) return;
+
+        auto& dens = mutableDense();
+        auto& dat  = mStorage.data();
+        auto& sp   = mStorage.sparse();
+
+        std::swap(dens[i], dens[j]);
+        std::swap(dat[i], dat[j]);
+        sp[EntityIndex::index(dens[i])] = static_cast<uint32_t>(i);
+        sp[EntityIndex::index(dens[j])] = static_cast<uint32_t>(j);
     }
 
     // =========================================================================
