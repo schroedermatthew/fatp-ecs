@@ -223,6 +223,7 @@ jobs:
           FATP_BENCH_BATCHES: "${{ inputs.batches }}"
           FATP_BENCH_WARMUP_RUNS: "${{ inputs.warmup }}"
           FATP_BENCH_NO_STABILIZE: "1"
+          FATP_BENCH_NO_SCOPE: "1"
         run: .\build\Release\benchmark.exe 2>&1 | Tee-Object -FilePath bench-output.txt
 
       - name: Upload results
