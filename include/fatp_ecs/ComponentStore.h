@@ -112,7 +112,6 @@ public:
 
     // Dense/data array accessors (for OwningGroup, sort, snapshot)
     [[nodiscard]] virtual const std::vector<Entity>& denseTyped()    const noexcept = 0;
-    [[nodiscard]] virtual std::vector<Entity>&        mutableDenseTyped() noexcept = 0;
     [[nodiscard]] virtual T&        dataAtTyped(std::size_t i) = 0;
     [[nodiscard]] virtual const T&  dataAtTyped(std::size_t i) const = 0;
     [[nodiscard]] virtual T&        dataAtUncheckedTyped(std::size_t i) noexcept = 0;
@@ -144,7 +143,6 @@ public:
     [[nodiscard]] const T* componentDataPtr()    const noexcept { return componentDataPtrTyped(); }
 
     [[nodiscard]] const std::vector<Entity>& dense()         const noexcept { return denseTyped(); }
-    [[nodiscard]] std::vector<Entity>&        mutableDense()       noexcept { return mutableDenseTyped(); }
 
     [[nodiscard]] T&       dataAt(std::size_t i)                    { return dataAtTyped(i); }
     [[nodiscard]] const T& dataAt(std::size_t i)              const { return dataAtTyped(i); }
@@ -293,7 +291,6 @@ public:
     [[nodiscard]] const T* componentDataPtrTyped() const noexcept override { return mStorage.data().data(); }
 
     [[nodiscard]] const std::vector<Entity>& denseTyped() const noexcept override { return mStorage.dense(); }
-    [[nodiscard]] std::vector<Entity>& mutableDenseTyped() noexcept override { return mStorage.dense(); }
 
     [[nodiscard]] T&       dataAtTyped(std::size_t i)       override { return mStorage.dataAtUnchecked(i); }
     [[nodiscard]] const T& dataAtTyped(std::size_t i) const override { return mStorage.dataAtUnchecked(i); }
@@ -357,7 +354,6 @@ public:
     }
 
     [[nodiscard]] const std::vector<Entity>& dense() const noexcept { return mStorage.dense(); }
-    [[nodiscard]] std::vector<Entity>& mutableDense() noexcept { return mStorage.dense(); }
 
     [[nodiscard]] T&       dataAt(std::size_t i)       { return mStorage.dataAtUnchecked(i); }
     [[nodiscard]] const T& dataAt(std::size_t i) const { return mStorage.dataAtUnchecked(i); }
@@ -385,14 +381,7 @@ public:
 
     void swapDenseEntries(std::size_t i, std::size_t j) noexcept
     {
-        if (i == j) return;
-        auto& dense  = mStorage.dense();
-        auto& data   = mStorage.data();
-        auto& sparse = mStorage.sparse();
-        std::swap(dense[i],  dense[j]);
-        std::swap(data[i],   data[j]);
-        sparse[EntityIndex::index(dense[i])] = static_cast<uint32_t>(i);
-        sparse[EntityIndex::index(dense[j])] = static_cast<uint32_t>(j);
+        mStorage.swapDenseEntries(i, j);
     }
 
     static constexpr std::size_t dataAlignment() noexcept
