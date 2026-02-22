@@ -157,27 +157,30 @@ public:
 
     [[nodiscard]] std::size_t count() const
     {
-        if (anyStoreNull())
-        {
-            return 0;
-        }
-
-        std::size_t result = 0;
         if constexpr (sizeof...(Ts) == 1 && sizeof...(Xs) == 0)
         {
-            // Fast path: single include, no exclusions.
-            return std::get<0>(mStores)->size();
-        }
-        else if constexpr (sizeof...(Ts) == 1)
-        {
-            eachSingleComponentConst(
-                [&result](Entity, const Ts&...) { ++result; });
+            // Fast path: single include, no exclusions — size() is exact.
+            return anyStoreNull() ? 0 : std::get<0>(mStores)->size();
         }
         else
         {
-            eachMultiComponentConst([&result](Entity, const Ts&...) { ++result; });
+            if (anyStoreNull())
+            {
+                return 0;
+            }
+            std::size_t result = 0;
+            if constexpr (sizeof...(Ts) == 1)
+            {
+                eachSingleComponentConst(
+                    [&result](Entity, const Ts&...) { ++result; });
+            }
+            else
+            {
+                eachMultiComponentConst(
+                    [&result](Entity, const Ts&...) { ++result; });
+            }
+            return result;
         }
-        return result;
     }
 
 private:
