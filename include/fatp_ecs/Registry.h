@@ -126,13 +126,20 @@ public:
     {
         auto* store = ensureStore<T>();
 
-        T* existing = store->tryGet(entity);
-        if (existing != nullptr)
-        {
-            return *existing;
-        }
-
+        // emplace() delegates to SparseSetWithData::tryEmplace, which does a
+        // single sparse lookup and returns nullptr if the entity already has
+        // this component. The previous pattern called tryGet() first (one
+        // sparse lookup) then emplace() (another), doing the duplicate check
+        // twice. Using emplace() directly halves the sparse-array traffic on
+        // the hot path.
+        //
+        // Contract preserved: if entity already has T, the existing component
+        // is returned unchanged and no event is fired.
         T* inserted = store->emplace(entity, std::forward<Args>(args)...);
+        if (inserted == nullptr)
+        {
+            return *store->tryGet(entity);
+        }
 
         mEvents.emitComponentAdded<T>(entity, *inserted);
 

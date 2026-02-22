@@ -15,6 +15,7 @@
 // type-erased in a FastHashMap keyed by TypeId, lazily created on first
 // listener connection to avoid overhead for unobserved component types.
 
+#include <cstdint>
 #include <memory>
 
 #include <fat_p/FastHashMap.h>
@@ -149,12 +150,21 @@ private:
         auto* existing = mSignals.find(tid);
         if (existing != nullptr)
         {
-            return static_cast<ComponentSignalPair<T>*>(existing->get());
+            auto* raw = static_cast<ComponentSignalPair<T>*>(existing->get());
+            if (tid < kSignalCacheSize)
+            {
+                mSignalCache[tid] = raw;
+            }
+            return raw;
         }
 
         auto pair = std::make_unique<ComponentSignalPair<T>>();
         auto* raw = pair.get();
         mSignals.insert(tid, std::move(pair));
+        if (tid < kSignalCacheSize)
+        {
+            mSignalCache[tid] = raw;
+        }
         return raw;
     }
 
@@ -162,15 +172,61 @@ private:
     ComponentSignalPair<T>* getSignalPair()
     {
         const TypeId tid = typeId<T>();
+
+        // Fast path: flat cache. kAbsent sentinel means we already confirmed
+        // no pair exists for this type — skip the FastHashMap lookup entirely.
+        if (tid < kSignalCacheSize)
+        {
+            auto* cached = mSignalCache[tid];
+            if (cached == kAbsentSentinel())
+            {
+                return nullptr;
+            }
+            if (cached != nullptr)
+            {
+                return static_cast<ComponentSignalPair<T>*>(cached);
+            }
+        }
+
         auto* val = mSignals.find(tid);
         if (val == nullptr)
         {
+            // Cache the negative result so future calls skip the hash lookup.
+            if (tid < kSignalCacheSize)
+            {
+                mSignalCache[tid] = kAbsentSentinel();
+            }
             return nullptr;
         }
-        return static_cast<ComponentSignalPair<T>*>(val->get());
+        auto* raw = static_cast<ComponentSignalPair<T>*>(val->get());
+        if (tid < kSignalCacheSize)
+        {
+            mSignalCache[tid] = raw;
+        }
+        return raw;
     }
 
+    // Returns a sentinel pointer value meaning "looked up, confirmed absent."
+    // Reinterprets 0x1 as a pointer — never a valid object address.
+    // Used to distinguish "not yet cached" (nullptr) from "cached: no pair" (kAbsentSentinel).
+    static IComponentSignalPair* kAbsentSentinel() noexcept
+    {
+        return reinterpret_cast<IComponentSignalPair*>(std::uintptr_t{1});
+    }
+
+    static constexpr std::size_t kSignalCacheSize = 64;
+
     fat_p::FastHashMap<TypeId, std::unique_ptr<IComponentSignalPair>> mSignals;
+
+    // Flat cache indexed by TypeId. Three states:
+    //   nullptr           — not yet looked up for this TypeId
+    //   kAbsentSentinel() — looked up, no signal pair registered
+    //   other pointer     — pointer to the live ComponentSignalPair<T>
+    //
+    // When a listener is first connected (ensureSignalPair), the cache entry
+    // is updated from kAbsentSentinel to the real pointer, so subsequent
+    // emitComponentAdded calls will find it.
+    std::array<IComponentSignalPair*, kSignalCacheSize> mSignalCache{};
 };
 
 } // namespace fatp_ecs
