@@ -287,8 +287,8 @@ public:
     [[nodiscard]] std::size_t     denseCountTyped()  const noexcept override { return mStorage.size(); }
     [[nodiscard]] const uint32_t* sparsePtrTyped()   const noexcept override { return mStorage.sparse().data(); }
     [[nodiscard]] std::size_t     sparseCountTyped() const noexcept override { return mStorage.sparse().size(); }
-    [[nodiscard]] T*       componentDataPtrTyped()       noexcept override { return mStorage.data().data(); }
-    [[nodiscard]] const T* componentDataPtrTyped() const noexcept override { return mStorage.data().data(); }
+    [[nodiscard]] T*       componentDataPtrTyped()       noexcept override { return mStorage.empty() ? nullptr : &mStorage.dataAtUnchecked(0); }
+    [[nodiscard]] const T* componentDataPtrTyped() const noexcept override { return mStorage.empty() ? nullptr : &mStorage.dataAtUnchecked(0); }
 
     [[nodiscard]] const std::vector<Entity>& denseTyped() const noexcept override { return mStorage.dense(); }
 
@@ -374,8 +374,8 @@ public:
     [[nodiscard]] std::size_t     denseCount()  const noexcept { return mStorage.size(); }
     [[nodiscard]] const uint32_t* sparsePtr()   const noexcept { return mStorage.sparse().data(); }
     [[nodiscard]] std::size_t     sparseCount() const noexcept { return mStorage.sparse().size(); }
-    [[nodiscard]] T*       componentDataPtr()       noexcept { return mStorage.data().data(); }
-    [[nodiscard]] const T* componentDataPtr() const noexcept { return mStorage.data().data(); }
+    [[nodiscard]] T*       componentDataPtr()       noexcept { return mStorage.empty() ? nullptr : &mStorage.dataAtUnchecked(0); }
+    [[nodiscard]] const T* componentDataPtr() const noexcept { return mStorage.empty() ? nullptr : &mStorage.dataAtUnchecked(0); }
 
     [[nodiscard]] std::size_t getDenseIndex(Entity e) const noexcept { return mStorage.indexOf(e); }
 
