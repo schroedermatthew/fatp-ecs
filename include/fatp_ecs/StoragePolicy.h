@@ -149,6 +149,17 @@ struct ConcurrentStoragePolicy
             void push_back(T&& v)        { [[maybe_unused]] auto g = mLock.lock(); mData.push_back(std::move(v)); }
             void push_back(const T& v)   { [[maybe_unused]] auto g = mLock.lock(); mData.push_back(v); }
             void pop_back()              { [[maybe_unused]] auto g = mLock.lock(); mData.pop_back(); }
+            void clear()                 { [[maybe_unused]] auto g = mLock.lock(); mData.clear(); }
+
+            template <typename... Args>
+            T& emplace_back(Args&&... args)
+            {
+                [[maybe_unused]] auto g = mLock.lock();
+                return mData.emplace_back(std::forward<Args>(args)...);
+            }
+
+            T& back()             { [[maybe_unused]] auto g = mLock.lock(); return mData.back(); }
+            const T& back() const { [[maybe_unused]] auto g = mLock.lock_shared(); return mData.back(); }
 
             // Mutable read — exclusive (caller may write through the ref)
             T& operator[](std::size_t i)       { [[maybe_unused]] auto g = mLock.lock(); return mData[i]; }
