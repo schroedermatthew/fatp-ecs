@@ -50,7 +50,9 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <tuple>
+#include <vector>
 
 #include "ComponentStore.h"
 #include "Entity.h"
@@ -183,7 +185,79 @@ public:
         }
     }
 
+    // =========================================================================
+    // EnTT-compatible get<T>(entity) — returns T& for a specific entity.
+    // =========================================================================
+
+    template <typename T>
+    [[nodiscard]] T& get(Entity entity)
+    {
+        constexpr std::size_t I = indexOfType<T>();
+        return std::get<I>(mStores)->getUnchecked(entity);
+    }
+
+    template <typename T>
+    [[nodiscard]] const T& get(Entity entity) const
+    {
+        constexpr std::size_t I = indexOfType<T>();
+        return std::get<I>(mStores)->getUnchecked(entity);
+    }
+
+    // =========================================================================
+    // EnTT-compatible range-for support: for (Entity e : view) { ... }
+    //
+    // Builds a lazily-cached entity list on first begin() call.
+    // The view is intended to be a short-lived stack object per frame, so
+    // the vector allocation is acceptable (matches Pacman's 5-entity scale).
+    // =========================================================================
+
+    [[nodiscard]] auto begin()
+    {
+        buildEntityCache();
+        return mEntityCache->begin();
+    }
+
+    [[nodiscard]] auto end()
+    {
+        buildEntityCache();
+        return mEntityCache->end();
+    }
+
+    [[nodiscard]] auto begin() const
+    {
+        buildEntityCache();
+        return mEntityCache->begin();
+    }
+
+    [[nodiscard]] auto end() const
+    {
+        buildEntityCache();
+        return mEntityCache->end();
+    }
+
 private:
+    // Helper: index of T in Ts...
+    template <typename T, std::size_t I = 0>
+    static constexpr std::size_t indexOfType()
+    {
+        if constexpr (I >= sizeof...(Ts)) return I;
+        else if constexpr (std::is_same_v<T, std::tuple_element_t<I, std::tuple<Ts...>>>) return I;
+        else return indexOfType<T, I + 1>();
+    }
+
+    void buildEntityCache() const
+    {
+        if (mEntityCache.has_value()) return;
+        mEntityCache.emplace();
+        if (!anyStoreNull())
+        {
+            const_cast<ViewImpl*>(this)->each(
+                [this](Entity e, Ts&...) { mEntityCache->push_back(e); });
+        }
+    }
+
+    mutable std::optional<std::vector<Entity>> mEntityCache;
+
     std::tuple<TypedIComponentStore<Ts>*...> mStores;
     std::tuple<TypedIComponentStore<Xs>*...> mExcludeStores;
 
