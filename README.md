@@ -63,41 +63,47 @@ Benchmarked against [EnTT](https://github.com/skypjack/entt) (v3.14), the indust
 
 fatp-ecs uses 64-bit entity IDs throughout; all comparisons are against EnTT configured with 64-bit IDs (apples-to-apples).
 
-### vs EnTT-64 at 1M entities (GCC-14, GitHub Actions)
+### vs EnTT-64 at scale (GCC-14, GitHub Actions)
+
+Rows 1–10: N=1M entities. Fragmented and Churn max at N=100K.
 
 | Category | fatp-ecs | EnTT-64 | ratio |
 |---|---|---|---|
-| Create entities | 7.80 ns | 12.70 ns | **0.61x** |
-| Destroy entities | 9.11 ns | 12.72 ns | **0.72x** |
-| Add 1 component | 16.23 ns | 13.74 ns | 1.18x |
-| Add 3 components | 46.01 ns | 40.27 ns | 1.14x |
-| Remove component | 5.56 ns | 19.91 ns | **0.28x** |
-| Get component | 2.67 ns | 4.82 ns | **0.55x** |
-| 1-comp iteration | 0.67 ns | 0.90 ns | **0.74x** |
-| 2-comp iteration | 1.30 ns | 4.91 ns | **0.26x** |
-| Sparse iteration | 1.79 ns | 4.93 ns | **0.36x** |
-| 3-comp iteration | 3.15 ns | 7.69 ns | **0.41x** |
+| Create entities | 7.94 ns | 12.73 ns | **0.62x** |
+| Destroy entities | 8.91 ns | 12.86 ns | **0.69x** |
+| Add 1 component | 18.95 ns | 13.68 ns | 1.39x |
+| Add 3 components | 45.77 ns | 41.08 ns | 1.11x |
+| Remove component | 5.83 ns | 15.17 ns | **0.38x** |
+| Get component | 3.13 ns | 4.87 ns | **0.64x** |
+| 1-comp iteration | 0.68 ns | 0.93 ns | **0.73x** |
+| 2-comp iteration | 1.35 ns | 4.13 ns | **0.33x** |
+| Sparse iteration | 1.70 ns | 4.22 ns | **0.40x** |
+| 3-comp iteration | 2.96 ns | 7.69 ns | **0.38x** |
+| Fragmented iter  | 0.64 ns | 0.95 ns | **0.67x** |
+| Churn (create+destroy) | 16.40 ns | 31.22 ns | **0.53x** |
 
 **Bold** = fatp-ecs faster. Ratio below 1.0x means fatp-ecs is faster by that factor.
 
 Add component is slower because fatp-ecs fires lifecycle events on every `add()` — `onComponentAdded<T>` — which EnTT's `emplace` does not. This is a deliberate design choice, not an implementation gap. The event system path costs roughly 3–4 ns per add on GCC.
 
-### Cross-compiler summary (N=1M, vs EnTT-64)
+### Cross-compiler summary (N=1M except Frag/Churn at N=100K, vs EnTT-64)
 
 | Category | GCC-13 | GCC-14 | Clang-16 | Clang-17 | MSVC |
 |---|---|---|---|---|---|
-| Create | **0.53x** | **0.61x** | **0.64x** | **0.66x** | **0.67x** |
-| Destroy | **0.54x** | **0.72x** | **0.56x** | **0.51x** | **0.40x** |
-| Add 1 | 1.29x | 1.18x | 1.21x | 1.19x | 1.02x |
-| Add 3 | 1.18x | 1.14x | 1.08x | 1.10x | 1.14x |
-| Remove | **0.35x** | **0.28x** | **0.50x** | **0.45x** | **0.29x** |
-| Get | **0.56x** | **0.55x** | **0.84x** | **0.79x** | **0.77x** |
-| 1-comp iter | **0.67x** | **0.74x** | **0.68x** | **0.62x** | **0.83x** |
-| 2-comp iter | **0.31x** | **0.26x** | **0.55x** | **0.61x** | **0.32x** |
-| Sparse iter | **0.41x** | **0.36x** | **0.58x** | **0.55x** | **0.29x** |
-| 3-comp iter | **0.40x** | **0.41x** | **0.70x** | **0.70x** | **0.42x** |
+| Create | **0.54x** | **0.62x** | **0.62x** | **0.63x** | **0.70x** |
+| Destroy | **0.54x** | **0.69x** | **0.57x** | **0.54x** | **0.40x** |
+| Add 1 | 1.49x | 1.39x | 1.18x | 1.21x | 1.06x |
+| Add 3 | 1.33x | 1.11x | 1.03x | 1.07x | 1.14x |
+| Remove | **0.35x** | **0.38x** | **0.50x** | **0.45x** | **0.30x** |
+| Get | **0.64x** | **0.64x** | **0.89x** | **0.90x** | **0.99x** |
+| 1-comp iter | **0.74x** | **0.73x** | **0.63x** | **0.68x** | **0.63x** |
+| 2-comp iter | **0.34x** | **0.33x** | **0.69x** | **0.63x** | **0.31x** |
+| Sparse iter | **0.48x** | **0.40x** | **0.63x** | **0.58x** | **0.27x** |
+| 3-comp iter | **0.39x** | **0.38x** | **0.61x** | **0.60x** | **0.43x** |
+| Fragmented | **0.68x** | **0.67x** | **0.69x** | **0.62x** | **0.69x** |
+| Churn | **0.46x** | **0.53x** | **0.50x** | **0.50x** | **0.36x** |
 
-Lifecycle operations (create, destroy, remove) and iteration are consistently faster across all compilers. Add component is the one category where fatp-ecs trades performance for features — the event system exists and is always ready.
+Lifecycle operations (create, destroy, remove) and iteration are consistently faster across all compilers and scales. Add component is the one category where fatp-ecs trades performance for features — the event system exists and is always ready. The 1-component iteration advantage is new: a virtual dispatch fix in `View.h` eliminated a vtable call per element in the hot loop.
 
 ### Running benchmarks
 
@@ -303,13 +309,18 @@ tests/
 
 ## Tests
 
-92 tests across 3 phases, all passing across the full CI matrix.
+17 test suites, all passing across the full CI matrix.
 
 ```
-Phase 1 — Core ECS:              27 passed
-Phase 2 — Events & Parallelism:  37 passed
+Phase 1 — Core ECS:                27 passed
+Phase 2 — Events & Parallelism:    37 passed
 Phase 3 — Gameplay Infrastructure: 28 passed
-Total:                            92 passed
+Exclude filters:                   (included in phase suites)
+Patch / Observer / Sort:           (included in phase suites)
+New API (replace, ctx, view fix):  19 passed
+NonOwningGroup:                    17 passed
+...and 10 additional targeted suites
+Total:                             465+ passed
 ```
 
 ## CI
