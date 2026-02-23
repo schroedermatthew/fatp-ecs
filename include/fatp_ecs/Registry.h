@@ -215,6 +215,40 @@ public:
         return entity;
     }
 
+    /**
+     * @brief Create an entity, preferring the slot of a given hint entity.
+     *
+     * Equivalent to EnTT's registry.create(hint). Tries to assign the same
+     * slot index as @p hint. If the slot is free, the new entity will have
+     * the same index (but a different generation if the slot was previously
+     * used). If the slot is occupied, falls back to normal allocation.
+     *
+     * Primary use cases: snapshot restore, network replay, deterministic sims.
+     *
+     * @param hint Entity whose slot index is preferred.
+     * @return Newly created entity. Check index(result) == index(hint) to
+     *         confirm the hint was honoured.
+     *
+     * @example
+     * @code
+     *   // Snapshot restore — replay saved entity IDs:
+     *   for (auto saved : savedEntities) {
+     *       auto e = registry.create(saved);  // same index if slot is free
+     *   }
+     * @endcode
+     */
+    [[nodiscard]] Entity create(Entity hint)
+    {
+        const uint32_t hint_index = EntityTraits::index(hint);
+        EntityHandle handle = mEntities.insert_at(hint_index, uint8_t{0});
+        Entity entity = EntityTraits::make(handle.index, handle.generation);
+        if (mEvents.onEntityCreated.slotCount() > 0)
+        {
+            mEvents.onEntityCreated.emit(entity);
+        }
+        return entity;
+    }
+
     bool destroy(Entity entity)
     {
         if (!isAlive(entity))

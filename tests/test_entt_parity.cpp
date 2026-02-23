@@ -488,6 +488,89 @@ static void test_group_if_exists_does_not_create()
 }
 
 // =============================================================================
+// create(hint)
+// =============================================================================
+
+static void test_create_hint_honours_free_slot()
+{
+    fatp_ecs::Registry reg;
+    auto original = reg.create();
+    reg.destroy(original);
+
+    auto restored = reg.create(original);
+    // Same slot index
+    TEST_ASSERT(fatp_ecs::EntityTraits::index(restored) ==
+                fatp_ecs::EntityTraits::index(original),
+                "hint slot index should match");
+}
+
+static void test_create_hint_different_generation()
+{
+    fatp_ecs::Registry reg;
+    auto original = reg.create();
+    reg.destroy(original);
+
+    auto restored = reg.create(original);
+    // Different generation — old handle must be dead
+    TEST_ASSERT(restored != original, "restored entity is a new handle");
+    TEST_ASSERT(!reg.valid(original), "original handle still invalid");
+    TEST_ASSERT(reg.valid(restored),  "restored handle is valid");
+}
+
+static void test_create_hint_fallback_when_occupied()
+{
+    fatp_ecs::Registry reg;
+    auto occupant = reg.create();   // slot 0 occupied
+    auto hint     = occupant;       // hint points at that same slot
+
+    auto result = reg.create(hint); // must NOT evict occupant
+    TEST_ASSERT(reg.valid(occupant), "occupant still alive after create(hint)");
+    TEST_ASSERT(reg.valid(result),   "result is valid after fallback");
+    TEST_ASSERT(result != occupant,  "result is a different entity");
+}
+
+static void test_create_hint_out_of_range_falls_back()
+{
+    fatp_ecs::Registry reg;
+    // Manufacture a hint with a very large index that doesn't exist yet
+    fatp_ecs::Entity big_hint = fatp_ecs::EntityTraits::make(9999, 1);
+    auto result = reg.create(big_hint);
+    TEST_ASSERT(reg.valid(result), "entity created even with large hint index");
+}
+
+static void test_create_hint_snapshot_round_trip()
+{
+    // Simulate: create 3 entities, save their IDs, destroy them,
+    // restore with create(hint) — all should recover their original indices.
+    fatp_ecs::Registry reg;
+    auto e0 = reg.create();
+    auto e1 = reg.create();
+    auto e2 = reg.create();
+
+    reg.add<Position>(e0, Position{1.f, 0.f});
+    reg.add<Position>(e1, Position{2.f, 0.f});
+    reg.add<Position>(e2, Position{3.f, 0.f});
+
+    // Save
+    fatp_ecs::Entity saved[3] = {e0, e1, e2};
+
+    // Destroy all
+    reg.destroy(e0); reg.destroy(e1); reg.destroy(e2);
+
+    // Restore — hint in order
+    auto r0 = reg.create(saved[0]);
+    auto r1 = reg.create(saved[1]);
+    auto r2 = reg.create(saved[2]);
+
+    TEST_ASSERT(fatp_ecs::EntityTraits::index(r0) == fatp_ecs::EntityTraits::index(saved[0]),
+                "r0 index matches saved[0]");
+    TEST_ASSERT(fatp_ecs::EntityTraits::index(r1) == fatp_ecs::EntityTraits::index(saved[1]),
+                "r1 index matches saved[1]");
+    TEST_ASSERT(fatp_ecs::EntityTraits::index(r2) == fatp_ecs::EntityTraits::index(saved[2]),
+                "r2 index matches saved[2]");
+}
+
+// =============================================================================
 // Main
 // =============================================================================
 
@@ -551,6 +634,13 @@ int main()
     RUN_TEST(test_non_owning_group_if_exists_null_before_create);
     RUN_TEST(test_non_owning_group_if_exists_non_null_after_create);
     RUN_TEST(test_group_if_exists_does_not_create);
+
+    std::printf("\n[create(hint)]\n");
+    RUN_TEST(test_create_hint_honours_free_slot);
+    RUN_TEST(test_create_hint_different_generation);
+    RUN_TEST(test_create_hint_fallback_when_occupied);
+    RUN_TEST(test_create_hint_out_of_range_falls_back);
+    RUN_TEST(test_create_hint_snapshot_round_trip);
 
     std::printf("\n=== Results: %d passed, %d failed ===\n", gPassed, gFailed);
     return gFailed > 0 ? 1 : 0;
