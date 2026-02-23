@@ -145,6 +145,13 @@ if(FATP_ECS_BUILD_TESTS)
         target_compile_options(test_storage_policy PRIVATE ${FATP_ECS_WARNING_FLAGS})
         add_test(NAME test_storage_policy COMMAND test_storage_policy)
     endif()
+
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_new_api.cpp")
+        add_executable(test_new_api tests/test_new_api.cpp)
+        target_link_libraries(test_new_api PRIVATE fatp_ecs)
+        target_compile_options(test_new_api PRIVATE ${FATP_ECS_WARNING_FLAGS})
+        add_test(NAME test_new_api COMMAND test_new_api)
+    endif()
 endif()
 
 # ==============================================================================

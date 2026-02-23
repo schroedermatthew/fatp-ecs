@@ -15,6 +15,7 @@
 // - BitSet: Component masks (via ComponentMask.h)
 
 #include <algorithm>
+#include <any>
 #include <array>
 #include <cassert>
 #include <cstddef>
@@ -22,6 +23,7 @@
 #include <memory>
 #include <typeindex>
 #include <typeinfo>
+#include <unordered_map>
 
 #include <fat_p/BinaryLite.h>
 #include <fat_p/FastHashMap.h>
@@ -73,6 +75,108 @@ public:
 
     [[nodiscard]] EventBus& events() noexcept { return mEvents; }
     [[nodiscard]] const EventBus& events() const noexcept { return mEvents; }
+
+    // =========================================================================
+    // Context Storage
+    // =========================================================================
+
+    /**
+     * @brief Store a singleton-like context object of type T in the registry.
+     *
+     * Constructs T in-place from @p args and stores it type-erased. Replaces
+     * any previously stored instance of the same type.
+     *
+     * @tparam T    The context object type.
+     * @tparam Args Constructor argument types forwarded to T.
+     * @param args  Arguments forwarded to T's constructor.
+     * @return Reference to the newly stored context object.
+     *
+     * @example
+     * @code
+     *   registry.emplace_context<PhysicsConfig>(9.81f, 0.016f);
+     * @endcode
+     */
+    template <typename T, typename... Args>
+    T& emplace_context(Args&&... args)
+    {
+        auto& slot = mContext[std::type_index(typeid(T))];
+        slot = T(std::forward<Args>(args)...);
+        return std::any_cast<T&>(slot);
+    }
+
+    /**
+     * @brief Retrieve a context object of type T.
+     *
+     * @tparam T The context object type.
+     * @return Reference to the stored object. Asserts if T was never stored.
+     *
+     * @example
+     * @code
+     *   auto& cfg = registry.ctx<PhysicsConfig>();
+     * @endcode
+     */
+    template <typename T>
+    [[nodiscard]] T& ctx()
+    {
+        auto it = mContext.find(std::type_index(typeid(T)));
+        assert(it != mContext.end() &&
+               "ctx<T>(): no context object of type T has been stored. "
+               "Call emplace_context<T>() first.");
+        return std::any_cast<T&>(it->second);
+    }
+
+    /** @brief Const overload of ctx<T>(). */
+    template <typename T>
+    [[nodiscard]] const T& ctx() const
+    {
+        auto it = mContext.find(std::type_index(typeid(T)));
+        assert(it != mContext.end() &&
+               "ctx<T>(): no context object of type T has been stored. "
+               "Call emplace_context<T>() first.");
+        return std::any_cast<const T&>(it->second);
+    }
+
+    /**
+     * @brief Try to retrieve a context object of type T without asserting.
+     *
+     * @tparam T The context object type.
+     * @return Pointer to the stored object, or nullptr if not present.
+     *
+     * @example
+     * @code
+     *   if (auto* cfg = registry.try_ctx<PhysicsConfig>()) { ... }
+     * @endcode
+     */
+    template <typename T>
+    [[nodiscard]] T* try_ctx()
+    {
+        auto it = mContext.find(std::type_index(typeid(T)));
+        if (it == mContext.end()) return nullptr;
+        return std::any_cast<T>(&it->second);
+    }
+
+    /** @brief Const overload of try_ctx<T>(). */
+    template <typename T>
+    [[nodiscard]] const T* try_ctx() const
+    {
+        auto it = mContext.find(std::type_index(typeid(T)));
+        if (it == mContext.end()) return nullptr;
+        return std::any_cast<const T>(&it->second);
+    }
+
+    /**
+     * @brief Remove a stored context object of type T.
+     *
+     * @tparam T The context object type.
+     * @return true if T was present and removed; false if it was not stored.
+     */
+    template <typename T>
+    bool erase_context()
+    {
+        return mContext.erase(std::type_index(typeid(T))) > 0;
+    }
+
+
 
     // =========================================================================
     // Entity Lifecycle
@@ -156,6 +260,70 @@ public:
 
         mEvents.emitComponentAdded<T>(entity, *inserted);
 
+        return *inserted;
+    }
+
+    /**
+     * @brief Replace an existing component with new value(s), firing onComponentUpdated.
+     *
+     * The entity must already have component T — if it does not, the behaviour
+     * is undefined in release builds and triggers an assertion in debug builds.
+     * Use emplace_or_replace<T>() when you need upsert semantics.
+     *
+     * @tparam T    Component type to replace.
+     * @tparam Args Constructor argument types forwarded to T.
+     * @param entity The entity whose component to replace.
+     * @param args   Arguments forwarded to T's constructor.
+     * @return Reference to the newly constructed component.
+     *
+     * @example
+     * @code
+     *   registry.replace<Position>(player, 10.0f, 20.0f);
+     * @endcode
+     */
+    template <typename T, typename... Args>
+    T& replace(Entity entity, Args&&... args)
+    {
+        auto* store = ensureStore<T>();
+        T* existing = store->tryGetComponent(entity);
+        assert(existing != nullptr &&
+               "replace<T>(): entity does not have component T. "
+               "Use emplace_or_replace<T>() for upsert semantics.");
+        *existing = T(std::forward<Args>(args)...);
+        mEvents.emitComponentUpdated<T>(entity, *existing);
+        return *existing;
+    }
+
+    /**
+     * @brief Add component T if the entity does not have it, or replace it if it does.
+     *
+     * Fires onComponentAdded when inserting, onComponentUpdated when replacing.
+     *
+     * @tparam T    Component type.
+     * @tparam Args Constructor argument types forwarded to T.
+     * @param entity The entity to update.
+     * @param args   Arguments forwarded to T's constructor.
+     * @return Reference to the component (newly created or replaced).
+     *
+     * @example
+     * @code
+     *   registry.emplace_or_replace<Health>(entity, 100);
+     * @endcode
+     */
+    template <typename T, typename... Args>
+    T& emplace_or_replace(Entity entity, Args&&... args)
+    {
+        auto* store = ensureStore<T>();
+        T* existing = store->tryGetComponent(entity);
+        if (existing != nullptr)
+        {
+            *existing = T(std::forward<Args>(args)...);
+            mEvents.emitComponentUpdated<T>(entity, *existing);
+            return *existing;
+        }
+
+        T* inserted = store->emplaceComponent(entity, std::forward<Args>(args)...);
+        mEvents.emitComponentAdded<T>(entity, *inserted);
         return *inserted;
     }
 
@@ -1052,6 +1220,10 @@ private:
 
     fat_p::FastHashMap<TypeId, std::unique_ptr<IComponentStore>> mStores;
     EventBus mEvents;
+
+    /// @brief Type-erased context storage, keyed by std::type_index.
+    /// Holds singleton-like objects accessed via ctx<T>() / emplace_context<T>().
+    std::unordered_map<std::type_index, std::any> mContext;
 
     /// @brief Flat array cache for O(1) component store lookup by TypeId.
     std::array<IComponentStore*, kStoreCacheSize> mStoreCache{};

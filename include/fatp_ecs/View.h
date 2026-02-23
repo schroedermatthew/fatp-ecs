@@ -281,15 +281,19 @@ private:
     template <typename Func>
     void eachSingleComponent(Func&& func)
     {
+        using T0 = std::tuple_element_t<0, std::tuple<Ts...>>;
         auto*             store = std::get<0>(mStores);
         const Entity*     ents  = store->densePtr();
         const std::size_t cnt   = store->size();
+        // Cache the raw component pointer once — eliminates the virtual
+        // dispatch that store->dataAt(i) would incur on every iteration.
+        T0*               data  = store->componentDataPtr();
 
         if constexpr (sizeof...(Xs) == 0)
         {
             for (std::size_t i = 0; i < cnt; ++i)
             {
-                func(ents[i], store->dataAt(i));
+                func(ents[i], data[i]);
             }
         }
         else
@@ -299,7 +303,7 @@ private:
             {
                 Entity entity = ents[i];
                 if (entityIsExcludedCached(entity, excCaches)) continue;
-                func(entity, store->dataAt(i));
+                func(entity, data[i]);
             }
         }
     }
@@ -307,15 +311,19 @@ private:
     template <typename Func>
     void eachSingleComponentConst(Func&& func) const
     {
+        using T0 = std::tuple_element_t<0, std::tuple<Ts...>>;
         const auto*       store = std::get<0>(mStores);
         const Entity*     ents  = store->densePtr();
         const std::size_t cnt   = store->size();
+        // Cache the raw component pointer once — eliminates the virtual
+        // dispatch that store->dataAt(i) would incur on every iteration.
+        const T0*         data  = store->componentDataPtr();
 
         if constexpr (sizeof...(Xs) == 0)
         {
             for (std::size_t i = 0; i < cnt; ++i)
             {
-                func(ents[i], store->dataAt(i));
+                func(ents[i], data[i]);
             }
         }
         else
@@ -325,7 +333,7 @@ private:
             {
                 Entity entity = ents[i];
                 if (entityIsExcludedCached(entity, excCaches)) continue;
-                func(entity, store->dataAt(i));
+                func(entity, data[i]);
             }
         }
     }
