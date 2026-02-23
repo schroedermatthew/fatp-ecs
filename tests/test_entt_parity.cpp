@@ -252,6 +252,242 @@ static void test_orphans_all_when_no_components_registered()
 }
 
 // =============================================================================
+// valid() / alive() / contains() / emplace() / erase() / try_get()
+// =============================================================================
+
+static void test_valid_alias()
+{
+    fatp_ecs::Registry reg;
+    auto e = reg.create();
+    TEST_ASSERT(reg.valid(e), "valid() true for live entity");
+    reg.destroy(e);
+    TEST_ASSERT(!reg.valid(e), "valid() false after destroy");
+}
+
+static void test_alive_alias()
+{
+    fatp_ecs::Registry reg;
+    TEST_ASSERT(reg.alive() == 0, "alive() 0 on empty registry");
+    (void)reg.create(); (void)reg.create();
+    TEST_ASSERT(reg.alive() == 2, "alive() returns entity count");
+}
+
+static void test_contains_alias()
+{
+    fatp_ecs::Registry reg;
+    auto e = reg.create();
+    TEST_ASSERT(!CHECK(reg.contains<Position>(e)), "contains false before add");
+    reg.add<Position>(e, Position{});
+    TEST_ASSERT(CHECK(reg.contains<Position>(e)),  "contains true after add");
+}
+
+static void test_emplace_alias()
+{
+    fatp_ecs::Registry reg;
+    auto e = reg.create();
+    auto& pos = reg.emplace<Position>(e, Position{3.f, 4.f});
+    TEST_ASSERT(pos.x == 3.f, "emplace alias constructs component");
+    TEST_ASSERT(CHECK(reg.has<Position>(e)), "entity has component after emplace");
+}
+
+static void test_erase_removes_component()
+{
+    fatp_ecs::Registry reg;
+    auto e = reg.create();
+    reg.add<Position>(e, Position{});
+    reg.erase<Position>(e);
+    TEST_ASSERT(!CHECK(reg.has<Position>(e)), "erase removes component");
+}
+
+static void test_try_get_alias()
+{
+    fatp_ecs::Registry reg;
+    auto e = reg.create();
+    TEST_ASSERT(CHECK(reg.try_get<Position>(e)) == nullptr, "try_get null when missing");
+    reg.add<Position>(e, Position{7.f, 8.f});
+    auto* p = reg.try_get<Position>(e);
+    TEST_ASSERT(p != nullptr,  "try_get non-null when present");
+    TEST_ASSERT(p->x == 7.f,   "try_get returns correct pointer");
+}
+
+// =============================================================================
+// clear<T>()
+// =============================================================================
+
+static void test_clear_single_type()
+{
+    fatp_ecs::Registry reg;
+    auto e1 = reg.create(); auto e2 = reg.create(); auto e3 = reg.create();
+    reg.add<Position>(e1, Position{}); reg.add<Position>(e2, Position{});
+    reg.add<Velocity>(e3, Velocity{});
+
+    reg.clear<Position>();
+
+    TEST_ASSERT(!CHECK(reg.has<Position>(e1)), "e1 Position cleared");
+    TEST_ASSERT(!CHECK(reg.has<Position>(e2)), "e2 Position cleared");
+    TEST_ASSERT(CHECK(reg.has<Velocity>(e3)),  "e3 Velocity unaffected");
+    TEST_ASSERT(reg.valid(e1) && reg.valid(e2), "entities still alive after clear<T>");
+}
+
+static void test_clear_single_type_fires_events()
+{
+    fatp_ecs::Registry reg;
+    int removedCount = 0;
+    auto conn = reg.events().onComponentRemoved<Position>().connect(
+        [&](fatp_ecs::Entity) { ++removedCount; });
+
+    auto e1 = reg.create(); auto e2 = reg.create();
+    reg.add<Position>(e1, Position{}); reg.add<Position>(e2, Position{});
+
+    reg.clear<Position>();
+    TEST_ASSERT(removedCount == 2, "clear<T> fires onComponentRemoved for each entity");
+}
+
+static void test_clear_unregistered_type_is_noop()
+{
+    fatp_ecs::Registry reg;
+    (void)reg.create();
+    // Position never added — should not crash
+    reg.clear<Position>();
+    TEST_ASSERT(reg.alive() == 1, "entity survives clear of unregistered type");
+}
+
+// =============================================================================
+// storage<T>()
+// =============================================================================
+
+static void test_storage_null_when_unregistered()
+{
+    fatp_ecs::Registry reg;
+    TEST_ASSERT(reg.storage<Position>() == nullptr, "storage null for unregistered type");
+}
+
+static void test_storage_non_null_after_add()
+{
+    fatp_ecs::Registry reg;
+    auto e = reg.create();
+    reg.add<Position>(e, Position{1.f, 2.f});
+    auto* s = reg.storage<Position>();
+    TEST_ASSERT(s != nullptr,    "storage non-null after add");
+    TEST_ASSERT(s->size() == 1,  "storage reflects correct size");
+}
+
+static void test_storage_dense_matches_component()
+{
+    fatp_ecs::Registry reg;
+    auto e = reg.create();
+    reg.add<Position>(e, Position{5.f, 6.f});
+    auto* s = reg.storage<Position>();
+    TEST_ASSERT(s->dense()[0] == e, "storage dense array contains entity");
+}
+
+// =============================================================================
+// on_construct / on_destroy / on_update
+// =============================================================================
+
+static void test_on_construct_alias()
+{
+    fatp_ecs::Registry reg;
+    int count = 0;
+    auto conn = reg.on_construct<Position>().connect(
+        [&](fatp_ecs::Entity, Position&) { ++count; });
+    auto e = reg.create();
+    reg.add<Position>(e, Position{});
+    TEST_ASSERT(count == 1, "on_construct fires on add");
+}
+
+static void test_on_destroy_alias()
+{
+    fatp_ecs::Registry reg;
+    int count = 0;
+    auto conn = reg.on_destroy<Position>().connect(
+        [&](fatp_ecs::Entity) { ++count; });
+    auto e = reg.create();
+    reg.add<Position>(e, Position{});
+    reg.remove<Position>(e);
+    TEST_ASSERT(count == 1, "on_destroy fires on remove");
+}
+
+static void test_on_update_alias()
+{
+    fatp_ecs::Registry reg;
+    int count = 0;
+    auto conn = reg.on_update<Position>().connect(
+        [&](fatp_ecs::Entity, Position&) { ++count; });
+    auto e = reg.create();
+    reg.add<Position>(e, Position{});
+    reg.patch<Position>(e, [](Position& p) { p.x = 1.f; });
+    TEST_ASSERT(count == 1, "on_update fires on patch");
+}
+
+// =============================================================================
+// group_if_exists / non_owning_group_if_exists
+// =============================================================================
+
+static void test_group_if_exists_null_before_create()
+{
+    fatp_ecs::Registry reg;
+    auto* grp = reg.group_if_exists<Position, Velocity>();
+    TEST_ASSERT(grp == nullptr, "group_if_exists null before group() called");
+}
+
+static void test_group_if_exists_non_null_after_create()
+{
+    fatp_ecs::Registry reg;
+(void)reg.group<Position, Velocity>();
+    auto* grp = reg.group_if_exists<Position, Velocity>();
+    TEST_ASSERT(grp != nullptr, "group_if_exists non-null after group() called");
+}
+
+static void test_group_if_exists_is_same_instance()
+{
+    fatp_ecs::Registry reg;
+    auto& grp1 = reg.group<Position, Velocity>();
+    auto* grp2 = reg.group_if_exists<Position, Velocity>();
+    TEST_ASSERT(&grp1 == grp2, "group_if_exists returns same instance as group()");
+}
+
+static void test_group_if_exists_wrong_types_null()
+{
+    fatp_ecs::Registry reg;
+(void)reg.group<Position, Velocity>();
+    // Health was never grouped
+    auto* grp = reg.group_if_exists<Position, Health>();
+    TEST_ASSERT(grp == nullptr, "group_if_exists null for different type set");
+}
+
+static void test_non_owning_group_if_exists_null_before_create()
+{
+    fatp_ecs::Registry reg;
+    auto* grp = reg.non_owning_group_if_exists<Position, Velocity>();
+    TEST_ASSERT(grp == nullptr, "non_owning_group_if_exists null before creation");
+}
+
+static void test_non_owning_group_if_exists_non_null_after_create()
+{
+    fatp_ecs::Registry reg;
+(void)reg.non_owning_group<Position, Velocity>();
+    auto* grp = reg.non_owning_group_if_exists<Position, Velocity>();
+    TEST_ASSERT(grp != nullptr, "non_owning_group_if_exists non-null after creation");
+}
+
+static void test_group_if_exists_does_not_create()
+{
+    fatp_ecs::Registry reg;
+    auto e = reg.create();
+    reg.add<Position>(e, Position{1.f, 2.f});
+    reg.add<Velocity>(e, Velocity{});
+
+    // Speculative lookup — must not create or assert
+    auto* grp = reg.group_if_exists<Position, Velocity>();
+    TEST_ASSERT(grp == nullptr, "group_if_exists does not create group");
+
+    // Now create — ownership must still be available
+    auto& created = reg.group<Position, Velocity>();
+    TEST_ASSERT(created.size() == 1, "group created normally after if_exists miss");
+}
+
+// =============================================================================
 // Main
 // =============================================================================
 
@@ -283,6 +519,38 @@ int main()
     RUN_TEST(test_orphans_finds_componentless_entities);
     RUN_TEST(test_orphans_empty_when_all_have_components);
     RUN_TEST(test_orphans_all_when_no_components_registered);
+
+    std::printf("\n[valid / alive / contains / emplace / erase / try_get]\n");
+    RUN_TEST(test_valid_alias);
+    RUN_TEST(test_alive_alias);
+    RUN_TEST(test_contains_alias);
+    RUN_TEST(test_emplace_alias);
+    RUN_TEST(test_erase_removes_component);
+    RUN_TEST(test_try_get_alias);
+
+    std::printf("\n[clear<T>]\n");
+    RUN_TEST(test_clear_single_type);
+    RUN_TEST(test_clear_single_type_fires_events);
+    RUN_TEST(test_clear_unregistered_type_is_noop);
+
+    std::printf("\n[storage<T>]\n");
+    RUN_TEST(test_storage_null_when_unregistered);
+    RUN_TEST(test_storage_non_null_after_add);
+    RUN_TEST(test_storage_dense_matches_component);
+
+    std::printf("\n[on_construct / on_destroy / on_update]\n");
+    RUN_TEST(test_on_construct_alias);
+    RUN_TEST(test_on_destroy_alias);
+    RUN_TEST(test_on_update_alias);
+
+    std::printf("\n[group_if_exists / non_owning_group_if_exists]\n");
+    RUN_TEST(test_group_if_exists_null_before_create);
+    RUN_TEST(test_group_if_exists_non_null_after_create);
+    RUN_TEST(test_group_if_exists_is_same_instance);
+    RUN_TEST(test_group_if_exists_wrong_types_null);
+    RUN_TEST(test_non_owning_group_if_exists_null_before_create);
+    RUN_TEST(test_non_owning_group_if_exists_non_null_after_create);
+    RUN_TEST(test_group_if_exists_does_not_create);
 
     std::printf("\n=== Results: %d passed, %d failed ===\n", gPassed, gFailed);
     return gFailed > 0 ? 1 : 0;

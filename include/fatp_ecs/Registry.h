@@ -77,6 +77,27 @@ public:
     [[nodiscard]] EventBus& events() noexcept { return mEvents; }
     [[nodiscard]] const EventBus& events() const noexcept { return mEvents; }
 
+    /// @brief EnTT-compatible alias: signal fired when T is added to an entity.
+    template <typename T>
+    [[nodiscard]] auto& on_construct()
+    {
+        return mEvents.onComponentAdded<T>();
+    }
+
+    /// @brief EnTT-compatible alias: signal fired when T is removed from an entity.
+    template <typename T>
+    [[nodiscard]] auto& on_destroy()
+    {
+        return mEvents.onComponentRemoved<T>();
+    }
+
+    /// @brief EnTT-compatible alias: signal fired when T is patched/replaced on an entity.
+    template <typename T>
+    [[nodiscard]] auto& on_update()
+    {
+        return mEvents.onComponentUpdated<T>();
+    }
+
     // =========================================================================
     // Context Storage
     // =========================================================================
@@ -230,7 +251,19 @@ public:
         return mEntities.is_valid(handle);
     }
 
+    /// @brief EnTT-compatible alias for isAlive().
+    [[nodiscard]] bool valid(Entity entity) const noexcept
+    {
+        return isAlive(entity);
+    }
+
     [[nodiscard]] std::size_t entityCount() const noexcept
+    {
+        return mEntities.size();
+    }
+
+    /// @brief EnTT-compatible alias for entityCount().
+    [[nodiscard]] std::size_t alive() const noexcept
     {
         return mEntities.size();
     }
@@ -435,6 +468,13 @@ public:
         return store->has(entity);
     }
 
+    /// @brief EnTT-compatible alias for has<T>().
+    template <typename T>
+    [[nodiscard]] bool contains(Entity entity) const
+    {
+        return has<T>(entity);
+    }
+
     template <typename T>
     [[nodiscard]] T& get(Entity entity)
     {
@@ -477,6 +517,48 @@ public:
             return nullptr;
         }
         return store->tryGetComponent(entity);
+    }
+
+    /// @brief EnTT-compatible alias for tryGet<T>().
+    template <typename T>
+    [[nodiscard]] T* try_get(Entity entity)
+    {
+        return tryGet<T>(entity);
+    }
+
+    /// @brief EnTT-compatible alias for tryGet<T>() const.
+    template <typename T>
+    [[nodiscard]] const T* try_get(Entity entity) const
+    {
+        return tryGet<T>(entity);
+    }
+
+    /**
+     * @brief EnTT-compatible alias for add<T>().
+     *
+     * EnTT calls the primary add operation emplace<T>(). Using emplace()
+     * here lets code written against EnTT compile without changes.
+     */
+    template <typename T, typename... Args>
+    T& emplace(Entity entity, Args&&... args)
+    {
+        return add<T>(entity, std::forward<Args>(args)...);
+    }
+
+    /**
+     * @brief Remove component T from entity, asserting it exists.
+     *
+     * Unlike remove<T>() which returns false when the component is missing,
+     * erase<T>() asserts in debug builds and is undefined behaviour in release
+     * if the component is absent. Matches EnTT's erase<T>() contract.
+     *
+     * @return true (always — assertion catches the missing case).
+     */
+    template <typename T>
+    void erase(Entity entity)
+    {
+        [[maybe_unused]] bool removed = remove<T>(entity);
+        assert(removed && "Registry::erase: entity did not have component T");
     }
 
     /**
@@ -873,6 +955,81 @@ public:
         return *raw;
     }
 
+    /**
+     * @brief Return a pointer to an existing owning group, or nullptr.
+     *
+     * Equivalent to EnTT's registry.group_if_exists<Ts...>(). Unlike group<Ts...>(),
+     * this never creates a group or modifies ownership — safe to call speculatively.
+     *
+     * @return Pointer to the group if it exists, nullptr otherwise.
+     *
+     * @example
+     * @code
+     *   if (auto* grp = registry.group_if_exists<Position, Velocity>()) {
+     *       grp->each([](Entity e, Position& p, Velocity& v) { ... });
+     *   }
+     * @endcode
+     */
+    template <typename... Ts>
+    [[nodiscard]] OwningGroup<Ts...>* group_if_exists()
+    {
+        const TypeId key = groupKey<Ts...>();
+        auto* existing = mGroups.find(key);
+        if (existing == nullptr)
+        {
+            return nullptr;
+        }
+        return static_cast<OwningGroup<Ts...>*>(existing->get());
+    }
+
+    template <typename... Ts>
+    [[nodiscard]] const OwningGroup<Ts...>* group_if_exists() const
+    {
+        const TypeId key = groupKey<Ts...>();
+        const auto* existing = mGroups.find(key);
+        if (existing == nullptr)
+        {
+            return nullptr;
+        }
+        return static_cast<const OwningGroup<Ts...>*>(existing->get());
+    }
+
+    /**
+     * @brief Return a pointer to an existing non-owning group, or nullptr.
+     *
+     * Non-owning counterpart to group_if_exists(). Never creates a group.
+     *
+     * @example
+     * @code
+     *   if (auto* grp = registry.non_owning_group_if_exists<Position, Health>()) {
+     *       grp->each([](Entity e, Position& p, Health& h) { ... });
+     *   }
+     * @endcode
+     */
+    template <typename... Ts>
+    [[nodiscard]] NonOwningGroup<Ts...>* non_owning_group_if_exists()
+    {
+        const TypeId key = nonOwningGroupKey<Ts...>();
+        auto* existing = mNonOwningGroups.find(key);
+        if (existing == nullptr)
+        {
+            return nullptr;
+        }
+        return static_cast<NonOwningGroup<Ts...>*>(existing->get());
+    }
+
+    template <typename... Ts>
+    [[nodiscard]] const NonOwningGroup<Ts...>* non_owning_group_if_exists() const
+    {
+        const TypeId key = nonOwningGroupKey<Ts...>();
+        const auto* existing = mNonOwningGroups.find(key);
+        if (existing == nullptr)
+        {
+            return nullptr;
+        }
+        return static_cast<const NonOwningGroup<Ts...>*>(existing->get());
+    }
+
     // =========================================================================
     // Sorting
     // =========================================================================
@@ -979,6 +1136,65 @@ public:
             it.value()->clear();
         }
         mEntities.clear();
+    }
+
+    /**
+     * @brief Remove component T from every entity that has it.
+     *
+     * Equivalent to EnTT's registry.clear<T>(). Fires onComponentRemoved<T>
+     * for each affected entity. Does not destroy entities.
+     *
+     * @example
+     * @code
+     *   registry.clear<Frozen>(); // thaw everything
+     * @endcode
+     */
+    template <typename T>
+    void clear()
+    {
+        auto* store = getStore<T>();
+        if (store == nullptr)
+        {
+            return; // type never registered — nothing to do
+        }
+        // Collect entities first: modifying store during iteration is unsafe.
+        const auto& dense = store->dense();
+        std::vector<Entity> targets(dense.begin(), dense.end());
+        for (Entity entity : targets)
+        {
+            remove<T>(entity); // fires onComponentRemoved
+        }
+    }
+
+    /**
+     * @brief Return a pointer to the typed component store for T.
+     *
+     * Equivalent to EnTT's registry.storage<T>(). Returns nullptr if the
+     * type has never been registered (no entity has ever had T).
+     *
+     * Provides direct access to the dense array, size, and sparse lookup.
+     * Useful for advanced iteration, manual sorting, and tooling.
+     *
+     * @warning Mutating the store directly bypasses lifecycle events.
+     *          Prefer Registry methods for normal use.
+     *
+     * @example
+     * @code
+     *   if (auto* s = registry.storage<Position>()) {
+     *       std::printf("%zu entities have Position\n", s->size());
+     *   }
+     * @endcode
+     */
+    template <typename T>
+    [[nodiscard]] TypedIComponentStore<T>* storage()
+    {
+        return getStore<T>();
+    }
+
+    template <typename T>
+    [[nodiscard]] const TypedIComponentStore<T>* storage() const
+    {
+        return getStore<T>();
     }
 
     [[nodiscard]] fat_p::SmallVector<Entity, 64> allEntities() const
