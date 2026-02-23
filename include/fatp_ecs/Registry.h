@@ -479,6 +479,153 @@ public:
         return store->tryGetComponent(entity);
     }
 
+    /**
+     * @brief Return existing component or construct one in place.
+     *
+     * If entity already has T, returns a reference to the existing component
+     * without modifying it. Otherwise constructs T in place from @p args and
+     * fires onComponentAdded. Equivalent to EnTT's get_or_emplace<T>().
+     *
+     * @tparam T    Component type.
+     * @tparam Args Constructor argument types.
+     * @param  entity Live entity.
+     * @param  args   Arguments forwarded to T's constructor (only used if
+     *                entity does not already have T).
+     * @return Reference to the (existing or newly constructed) component.
+     *
+     * @example
+     * @code
+     *   // Safe to call repeatedly — only constructs once.
+     *   auto& pos = registry.get_or_emplace<Position>(entity, 0.f, 0.f);
+     * @endcode
+     */
+    template <typename T, typename... Args>
+    T& get_or_emplace(Entity entity, Args&&... args)
+    {
+        auto* store = ensureStore<T>();
+        T* existing = store->tryGetComponent(entity);
+        if (existing != nullptr)
+        {
+            return *existing;
+        }
+        T* component = store->emplace(entity, std::forward<Args>(args)...);
+        mEvents.onComponentAdded<T>().emit(entity, *component);
+        return *component;
+    }
+
+    // =========================================================================
+    // Multi-component presence queries
+    // =========================================================================
+
+    /**
+     * @brief True if entity has ALL of the listed component types.
+     *
+     * Equivalent to EnTT's registry.all_of<Ts...>(entity).
+     *
+     * @example
+     * @code
+     *   if (registry.all_of<Position, Velocity>(entity)) { ... }
+     * @endcode
+     */
+    template <typename... Ts>
+    [[nodiscard]] bool all_of(Entity entity) const noexcept
+    {
+        return (has<Ts>(entity) && ...);
+    }
+
+    /**
+     * @brief True if entity has AT LEAST ONE of the listed component types.
+     *
+     * Equivalent to EnTT's registry.any_of<Ts...>(entity).
+     *
+     * @example
+     * @code
+     *   if (registry.any_of<Frozen, Stunned>(entity)) { ... }
+     * @endcode
+     */
+    template <typename... Ts>
+    [[nodiscard]] bool any_of(Entity entity) const noexcept
+    {
+        return (has<Ts>(entity) || ...);
+    }
+
+    /**
+     * @brief True if entity has NONE of the listed component types.
+     *
+     * Equivalent to EnTT's registry.none_of<Ts...>(entity).
+     *
+     * @example
+     * @code
+     *   if (registry.none_of<Dead, Disabled>(entity)) { ... }
+     * @endcode
+     */
+    template <typename... Ts>
+    [[nodiscard]] bool none_of(Entity entity) const noexcept
+    {
+        return !(has<Ts>(entity) || ...);
+    }
+
+    // =========================================================================
+    // Entity enumeration
+    // =========================================================================
+
+    /**
+     * @brief Invoke @p func for every live entity.
+     *
+     * Equivalent to EnTT's registry.each(func).
+     * Callback signature: void(Entity)
+     *
+     * @warning Do not create or destroy entities inside @p func. Use a
+     *          CommandBuffer for deferred structural changes.
+     *
+     * @example
+     * @code
+     *   registry.each([](Entity e) { std::printf("entity %u\n", e); });
+     * @endcode
+     */
+    template <typename Func>
+    void each(Func&& func) const
+    {
+        for (const auto& entry : mEntities.entries())
+        {
+            func(EntityTraits::make(entry.handle.index, entry.handle.generation));
+        }
+    }
+
+    /**
+     * @brief Invoke @p func for every live entity that has no components.
+     *
+     * Equivalent to EnTT's registry.orphans(func).
+     * Callback signature: void(Entity)
+     *
+     * O(entities * registered_types) — use sparingly, not in hot paths.
+     *
+     * @example
+     * @code
+     *   registry.orphans([&](Entity e) { registry.destroy(e); });
+     * @endcode
+     */
+    template <typename Func>
+    void orphans(Func&& func) const
+    {
+        each([&](Entity entity)
+        {
+            bool hasAny = false;
+            for (auto it = mStores.begin(); it != mStores.end(); ++it)
+            {
+                if (it.value()->has(entity))
+                {
+                    hasAny = true;
+                    break;
+                }
+            }
+            if (!hasAny)
+            {
+                func(entity);
+            }
+        });
+    }
+
     // =========================================================================
     // Component Mask Queries
     // =========================================================================

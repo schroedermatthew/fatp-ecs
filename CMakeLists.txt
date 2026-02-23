@@ -159,6 +159,13 @@ if(FATP_ECS_BUILD_TESTS)
         target_compile_options(test_non_owning_group PRIVATE ${FATP_ECS_WARNING_FLAGS})
         add_test(NAME test_non_owning_group COMMAND test_non_owning_group)
     endif()
+
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_entt_parity.cpp")
+        add_executable(test_entt_parity tests/test_entt_parity.cpp)
+        target_link_libraries(test_entt_parity PRIVATE fatp_ecs)
+        target_compile_options(test_entt_parity PRIVATE ${FATP_ECS_WARNING_FLAGS})
+        add_test(NAME test_entt_parity COMMAND test_entt_parity)
+    endif()
 endif()
 
 # ==============================================================================
