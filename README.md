@@ -1,10 +1,82 @@
-# FAT-P ECS Framework
+# fatp-ecs
 
-An Entity Component System framework built on [FAT-P](https://github.com/schroedermatthew/FatP), using 19 FAT-P components for real architectural reasons. Header-only, C++20, zero dependencies beyond FAT-P.
+An ECS built to show what [FAT-P](https://github.com/schroedermatthew/FatP) can do.
+
+The premise: take a library of focused, production-quality components — sparse sets, slot maps, signals, hash maps — and assemble them into something non-trivial. The result should be competitive with EnTT, the industry-standard ECS, out of the box. Not as a nice-to-have. As a baseline expectation.
+
+This is that result. 19 FAT-P components. EnTT API parity. Faster on most benchmarks. Built in a weekend with an AI pair-programmer.
 
 [![CI](https://github.com/schroedermatthew/fatp-ecs/actions/workflows/ci.yml/badge.svg)](https://github.com/schroedermatthew/fatp-ecs/actions/workflows/ci.yml)
 
-## Quick Start
+---
+
+## Performance
+
+Benchmarked against [EnTT](https://github.com/skypjack/entt) v3.14, the industry reference. All benchmarks use round-robin execution with randomized order, statistical reporting (median of 20 batches), and CPU frequency monitoring via [FatPBenchmarkRunner](https://github.com/schroedermatthew/FatP).
+
+fatp-ecs uses 64-bit entity IDs throughout. All comparisons are against EnTT configured with 64-bit IDs.
+
+### vs EnTT-64 at scale (GCC-14, GitHub Actions)
+
+Rows 1–10: N=1M entities. Fragmented and Churn max at N=100K.
+
+| Category | fatp-ecs | EnTT-64 | ratio |
+|---|---|---|---|
+| Create entities | 7.94 ns | 12.73 ns | **0.62x** |
+| Destroy entities | 8.91 ns | 12.86 ns | **0.69x** |
+| Add 1 component | 18.95 ns | 13.68 ns | 1.39x |
+| Add 3 components | 45.77 ns | 41.08 ns | 1.11x |
+| Remove component | 5.83 ns | 15.17 ns | **0.38x** |
+| Get component | 3.13 ns | 4.87 ns | **0.64x** |
+| 1-comp iteration | 0.68 ns | 0.93 ns | **0.73x** |
+| 2-comp iteration | 1.35 ns | 4.13 ns | **0.33x** |
+| Sparse iteration | 1.70 ns | 4.22 ns | **0.40x** |
+| 3-comp iteration | 2.96 ns | 7.69 ns | **0.38x** |
+| Fragmented iter  | 0.64 ns | 0.95 ns | **0.67x** |
+| Churn (create+destroy) | 16.40 ns | 31.22 ns | **0.53x** |
+
+**Bold** = fatp-ecs faster. Ratio below 1.0x means fatp-ecs wins by that factor.
+
+Add component is slower because fatp-ecs fires lifecycle events on every `add()`. This is deliberate — `onComponentAdded<T>` is always wired up, not opt-in. The event system costs ~3–4 ns per add on GCC. Everything else is faster.
+
+### Cross-compiler summary (N=1M except Frag/Churn at N=100K, vs EnTT-64)
+
+| Category | GCC-13 | GCC-14 | Clang-16 | Clang-17 | MSVC |
+|---|---|---|---|---|---|
+| Create | **0.54x** | **0.62x** | **0.62x** | **0.63x** | **0.70x** |
+| Destroy | **0.54x** | **0.69x** | **0.57x** | **0.54x** | **0.40x** |
+| Add 1 | 1.49x | 1.39x | 1.18x | 1.21x | 1.06x |
+| Add 3 | 1.33x | 1.11x | 1.03x | 1.07x | 1.14x |
+| Remove | **0.35x** | **0.38x** | **0.50x** | **0.45x** | **0.30x** |
+| Get | **0.64x** | **0.64x** | **0.89x** | **0.90x** | **0.99x** |
+| 1-comp iter | **0.74x** | **0.73x** | **0.63x** | **0.68x** | **0.63x** |
+| 2-comp iter | **0.34x** | **0.33x** | **0.69x** | **0.63x** | **0.31x** |
+| Sparse iter | **0.48x** | **0.40x** | **0.63x** | **0.58x** | **0.27x** |
+| 3-comp iter | **0.39x** | **0.38x** | **0.61x** | **0.60x** | **0.43x** |
+| Fragmented | **0.68x** | **0.67x** | **0.69x** | **0.62x** | **0.69x** |
+| Churn | **0.46x** | **0.53x** | **0.50x** | **0.50x** | **0.36x** |
+
+The iteration advantage is consistent everywhere. MSVC shows the strongest gains in sparse iteration (0.27x) and churn (0.36x). The event system overhead on add narrows at Clang/MSVC due to better inlining.
+
+### Running benchmarks
+
+```bash
+# Local (Windows, vcpkg)
+cmake -B build -DFATP_ECS_BUILD_BENCH=ON -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake
+cmake --build build --config Release --target benchmark
+build\Release\benchmark.exe
+
+# CI (manual dispatch)
+# Go to Actions > "fatp-ecs Benchmarks" > Run workflow
+```
+
+Environment variables: `FATP_BENCH_BATCHES` (default 20), `FATP_BENCH_WARMUP_RUNS` (default 3), `FATP_BENCH_NO_STABILIZE=1` (skip CPU wait), `FATP_BENCH_VERBOSE_STATS=1` (detailed output).
+
+---
+
+## API
+
+fatp-ecs matches the EnTT registry API surface. Code written against EnTT compiles against fatp-ecs with minimal changes — mostly namespace and header swaps.
 
 ```cpp
 #include <fatp_ecs/FatpEcs.h>
@@ -12,22 +84,62 @@ using namespace fatp_ecs;
 
 Registry registry;
 
-// Create entities
-Entity player = registry.create();
-registry.add<Position>(player, 0.0f, 0.0f);
-registry.add<Velocity>(player, 1.0f, 0.5f);
-registry.add<Health>(player, 100, 100);
+// Entity lifecycle
+Entity player   = registry.create();
+Entity restored = registry.create(saved_hint); // hint-based, for snapshot restore
 
-// Iterate with views
+// Component operations — EnTT names work directly
+registry.emplace<Position>(player, 0.f, 0.f);      // alias for add<T>()
+registry.emplace_or_replace<Velocity>(player, 1.f, 0.5f);
+registry.patch<Health>(player, [](Health& h) { h.hp -= 10; });
+registry.erase<Poison>(player);                     // asserting remove
+
+// Presence queries
+bool alive    = registry.valid(player);
+bool hasCombo = registry.all_of<Position, Velocity>(player);
+bool hasAny   = registry.any_of<Frozen, Stunned>(player);
+bool clean    = registry.none_of<Dead, Disabled>(player);
+Position* p   = registry.try_get<Position>(player); // nullptr if missing
+Position& pos = registry.get_or_emplace<Position>(player, 0.f, 0.f);
+
+// Entity enumeration
+registry.each([](Entity e) { /* all live entities */ });
+registry.orphans([&](Entity e) { registry.destroy(e); });
+
+// Bulk operations
+registry.clear<Frozen>();  // remove Frozen from every entity, fires events
+registry.clear();          // destroy everything
+
+// Direct store access (for tooling / custom sorting)
+if (auto* s = registry.storage<Position>()) {
+    std::printf("%zu entities have Position\n", s->size());
+}
+
+// Views
 registry.view<Position, Velocity>().each(
     [](Entity e, Position& pos, Velocity& vel) {
         pos.x += vel.dx;
         pos.y += vel.dy;
     });
 
-// Lifecycle events
-auto conn = registry.events().onEntityCreated.connect(
-    [](Entity e) { /* ... */ });
+// Views with exclude filters
+registry.view<Position>(Exclude<Frozen>{}).each(
+    [](Entity e, Position& pos) { /* skip frozen entities */ });
+
+// Groups (contiguous layout, fastest iteration)
+auto& grp = registry.group<Position, Velocity>();
+if (auto* g = registry.group_if_exists<Position, Velocity>()) {
+    g->each([](Entity e, Position& p, Velocity& v) { /* ... */ });
+}
+
+// Signals — EnTT names
+auto c1 = registry.on_construct<Health>().connect([](Entity e, Health& h) { /* ... */ });
+auto c2 = registry.on_destroy<Health>().connect([](Entity e) { /* ... */ });
+auto c3 = registry.on_update<Health>().connect([](Entity e, Health& h) { /* ... */ });
+
+// Observers — watch for component combinations appearing
+auto obs = registry.observe(OnAdded<Position>{}, OnAdded<Velocity>{});
+obs.each([](Entity e) { /* e now has both Position and Velocity */ });
 
 // Deferred operations (safe during iteration)
 CommandBuffer cmd;
@@ -53,81 +165,77 @@ templates.addTemplate("goblin", R"({
 Entity goblin = templates.spawn(registry, "goblin");
 
 // Overflow-safe gameplay math
-int hp = applyDamage(currentHp, damage, maxHp);  // clamped to [0, maxHp]
-int score = addScore(currentScore, points);       // saturates at INT_MAX
+int hp    = applyDamage(currentHp, damage, maxHp); // clamped to [0, maxHp]
+int score = addScore(currentScore, points);         // saturates at INT_MAX
 ```
 
-## Performance
+### EnTT migration reference
 
-Benchmarked against [EnTT](https://github.com/skypjack/entt) (v3.14), the industry-standard ECS. All benchmarks use round-robin execution with randomized order, statistical reporting (median of 20 batches), and CPU frequency monitoring via [FatPBenchmarkRunner](https://github.com/schroedermatthew/FatP).
+| EnTT | fatp-ecs | Notes |
+|---|---|---|
+| `registry.emplace<T>()` | `registry.emplace<T>()` | ✓ direct alias |
+| `registry.replace<T>()` | `registry.replace<T>()` | ✓ |
+| `registry.patch<T>()` | `registry.patch<T>()` | ✓ |
+| `registry.erase<T>()` | `registry.erase<T>()` | ✓ asserting remove |
+| `registry.remove<T>()` | `registry.remove<T>()` | ✓ returns bool |
+| `registry.get<T>()` | `registry.get<T>()` | ✓ |
+| `registry.try_get<T>()` | `registry.try_get<T>()` | ✓ |
+| `registry.get_or_emplace<T>()` | `registry.get_or_emplace<T>()` | ✓ |
+| `registry.contains<T>()` | `registry.contains<T>()` | ✓ |
+| `registry.all_of<Ts...>()` | `registry.all_of<Ts...>()` | ✓ |
+| `registry.any_of<Ts...>()` | `registry.any_of<Ts...>()` | ✓ |
+| `registry.none_of<Ts...>()` | `registry.none_of<Ts...>()` | ✓ |
+| `registry.valid()` | `registry.valid()` | ✓ |
+| `registry.alive()` | `registry.alive()` | ✓ |
+| `registry.each()` | `registry.each()` | ✓ |
+| `registry.orphans()` | `registry.orphans()` | ✓ |
+| `registry.clear<T>()` | `registry.clear<T>()` | ✓ fires events |
+| `registry.storage<T>()` | `registry.storage<T>()` | ✓ |
+| `registry.on_construct<T>()` | `registry.on_construct<T>()` | ✓ |
+| `registry.on_destroy<T>()` | `registry.on_destroy<T>()` | ✓ |
+| `registry.on_update<T>()` | `registry.on_update<T>()` | ✓ |
+| `registry.create(hint)` | `registry.create(hint)` | ✓ slot-index hint |
+| `registry.group_if_exists<Ts...>()` | `registry.group_if_exists<Ts...>()` | ✓ |
+| `registry.view<Ts>(exclude<Xs>)` | `registry.view<Ts>(Exclude<Xs>{})` | syntax differs |
+| `registry.emplace_or_replace<T>()` | `registry.emplace_or_replace<T>()` | ✓ |
 
-fatp-ecs uses 64-bit entity IDs throughout; all comparisons are against EnTT configured with 64-bit IDs (apples-to-apples).
+---
 
-### vs EnTT-64 at scale (GCC-14, GitHub Actions)
+## How FAT-P makes this possible
 
-Rows 1–10: N=1M entities. Fragmented and Churn max at N=100K.
+Each FAT-P component maps directly to an ECS problem:
 
-| Category | fatp-ecs | EnTT-64 | ratio |
-|---|---|---|---|
-| Create entities | 7.94 ns | 12.73 ns | **0.62x** |
-| Destroy entities | 8.91 ns | 12.86 ns | **0.69x** |
-| Add 1 component | 18.95 ns | 13.68 ns | 1.39x |
-| Add 3 components | 45.77 ns | 41.08 ns | 1.11x |
-| Remove component | 5.83 ns | 15.17 ns | **0.38x** |
-| Get component | 3.13 ns | 4.87 ns | **0.64x** |
-| 1-comp iteration | 0.68 ns | 0.93 ns | **0.73x** |
-| 2-comp iteration | 1.35 ns | 4.13 ns | **0.33x** |
-| Sparse iteration | 1.70 ns | 4.22 ns | **0.40x** |
-| 3-comp iteration | 2.96 ns | 7.69 ns | **0.38x** |
-| Fragmented iter  | 0.64 ns | 0.95 ns | **0.67x** |
-| Churn (create+destroy) | 16.40 ns | 31.22 ns | **0.53x** |
+| FAT-P Component | ECS Role |
+|---|---|
+| **StrongId** | Type-safe 64-bit Entity handles (index + generation) |
+| **SparseSetWithData** | O(1) component storage with cache-friendly dense iteration |
+| **SlotMap** | Entity allocator with generational ABA safety + `insert_at()` for hint-based create |
+| **FastHashMap** | Type-erased component store registry |
+| **SmallVector** | Stack-allocated entity query results |
+| **Signal** | Observer pattern for entity/component lifecycle events |
+| **ThreadPool** | Work-stealing parallel system execution |
+| **BitSet** | Component masks for archetype matching and dependency analysis |
+| **WorkQueue** | Job dispatch (via ThreadPool internals) |
+| **ObjectPool** | Per-frame temporary allocator with bulk reset |
+| **StringPool** | Interned entity names for pointer-equality comparison |
+| **FlatMap** | Sorted name-to-entity mapping for debug/editor tools |
+| **JsonLite** | Data-driven entity template definitions |
+| **StateMachine** | Compile-time AI state machines with context binding |
+| **FeatureManager** | Runtime system enable/disable toggles |
+| **CheckedArithmetic** | Overflow-safe health/damage/score calculations |
+| **AlignedVector** | SIMD-friendly aligned component storage |
+| **LockFreeQueue** | Thread-safe parallel command buffer |
+| **CircularBuffer** | Deferred command queues |
 
-**Bold** = fatp-ecs faster. Ratio below 1.0x means fatp-ecs is faster by that factor.
+The components weren't designed for an ECS. They were designed to be useful individually. The ECS is what happens when you compose them.
 
-Add component is slower because fatp-ecs fires lifecycle events on every `add()` — `onComponentAdded<T>` — which EnTT's `emplace` does not. This is a deliberate design choice, not an implementation gap. The event system path costs roughly 3–4 ns per add on GCC.
-
-### Cross-compiler summary (N=1M except Frag/Churn at N=100K, vs EnTT-64)
-
-| Category | GCC-13 | GCC-14 | Clang-16 | Clang-17 | MSVC |
-|---|---|---|---|---|---|
-| Create | **0.54x** | **0.62x** | **0.62x** | **0.63x** | **0.70x** |
-| Destroy | **0.54x** | **0.69x** | **0.57x** | **0.54x** | **0.40x** |
-| Add 1 | 1.49x | 1.39x | 1.18x | 1.21x | 1.06x |
-| Add 3 | 1.33x | 1.11x | 1.03x | 1.07x | 1.14x |
-| Remove | **0.35x** | **0.38x** | **0.50x** | **0.45x** | **0.30x** |
-| Get | **0.64x** | **0.64x** | **0.89x** | **0.90x** | **0.99x** |
-| 1-comp iter | **0.74x** | **0.73x** | **0.63x** | **0.68x** | **0.63x** |
-| 2-comp iter | **0.34x** | **0.33x** | **0.69x** | **0.63x** | **0.31x** |
-| Sparse iter | **0.48x** | **0.40x** | **0.63x** | **0.58x** | **0.27x** |
-| 3-comp iter | **0.39x** | **0.38x** | **0.61x** | **0.60x** | **0.43x** |
-| Fragmented | **0.68x** | **0.67x** | **0.69x** | **0.62x** | **0.69x** |
-| Churn | **0.46x** | **0.53x** | **0.50x** | **0.50x** | **0.36x** |
-
-Lifecycle operations (create, destroy, remove) and iteration are consistently faster across all compilers and scales. Add component is the one category where fatp-ecs trades performance for features — the event system exists and is always ready. The 1-component iteration advantage is new: a virtual dispatch fix in `View.h` eliminated a vtable call per element in the hot loop.
-
-### Running benchmarks
-
-Benchmarks require EnTT and are built separately:
-
-```bash
-# Local (Windows, vcpkg)
-cmake -B build -DFATP_ECS_BUILD_BENCH=ON -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake
-cmake --build build --config Release --target benchmark
-build\Release\benchmark.exe
-
-# CI (manual dispatch)
-# Go to Actions > "fatp-ecs Benchmarks" > Run workflow
-```
-
-Environment variables for tuning: `FATP_BENCH_BATCHES` (default 20), `FATP_BENCH_WARMUP_RUNS` (default 3), `FATP_BENCH_NO_STABILIZE=1` (skip CPU wait), `FATP_BENCH_VERBOSE_STATS=1` (detailed output).
+---
 
 ## Building
 
 Header-only. Requires C++20 and FAT-P as a sibling directory or via `FATP_INCLUDE_DIR`.
 
-### Build Scripts
-
-The easiest way to build everything:
+### Build scripts
 
 **Windows (PowerShell):**
 ```powershell
@@ -143,7 +251,7 @@ build.bat novisual              :: skip SDL2
 build.bat debug                 :: debug build
 ```
 
-**Linux / macOS (bash):**
+**Linux / macOS:**
 ```bash
 ./build.sh --clean              # full clean build
 ./build.sh --no-visual          # skip SDL2
@@ -152,34 +260,27 @@ build.bat debug                 :: debug build
 
 ### Manual CMake
 
-**Terminal demo + tests only (no SDL2 required):**
 ```bash
+# Tests only (no SDL2 required)
 cmake -B build -DFATP_INCLUDE_DIR=../FatP/include
 cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
-```
 
-**With SDL2 visual demo (Windows / vcpkg):**
-```bash
-cmake -B build -DFATP_INCLUDE_DIR=../FatP/include -DFATP_ECS_BUILD_VISUAL_DEMO=ON -DCMAKE_TOOLCHAIN_FILE="<vcpkg-root>/scripts/buildsystems/vcpkg.cmake"
+# With SDL2 visual demo (Windows / vcpkg)
+cmake -B build -DFATP_INCLUDE_DIR=../FatP/include -DFATP_ECS_BUILD_VISUAL_DEMO=ON \
+      -DCMAKE_TOOLCHAIN_FILE="<vcpkg-root>/scripts/buildsystems/vcpkg.cmake"
 cmake --build build --config Release
-```
 
-Run `vcpkg integrate install` to find your toolchain path. SDL2 and SDL2_ttf are installed automatically from `vcpkg.json`.
-
-**With SDL2 visual demo (Linux):**
-```bash
+# With SDL2 visual demo (Linux)
 sudo apt install libsdl2-dev libsdl2-ttf-dev
 cmake -B build -DFATP_INCLUDE_DIR=../FatP/include -DFATP_ECS_BUILD_VISUAL_DEMO=ON
 cmake --build build
-```
 
-**Direct compilation (no CMake):**
-```bash
+# Direct compilation
 g++ -std=c++20 -O2 -I include -I /path/to/FatP/include your_code.cpp -lpthread
 ```
 
-### CMake Options
+### CMake options
 
 | Option | Default | Description |
 |---|---|---|
@@ -189,27 +290,27 @@ g++ -std=c++20 -O2 -I include -I /path/to/FatP/include your_code.cpp -lpthread
 | `FATP_ECS_BUILD_VISUAL_DEMO` | `OFF` | Build SDL2 visual demo (requires SDL2, SDL2_ttf) |
 | `FATP_ECS_BUILD_BENCH` | `OFF` | Build benchmark suite (requires EnTT via vcpkg) |
 
+---
+
 ## Demo
 
-### Terminal Demo
+### Terminal demo
 
-Runs a headless space battle simulation exercising all 19 FAT-P components:
+Headless space battle simulation exercising all 19 FAT-P components:
 
 ```bash
 build/Release/demo.exe
 build/Release/demo.exe --wave-size 100 --turrets 8 --frames 500
 ```
 
-### Visual Demo (SDL2)
+### Visual demo (SDL2)
 
-Real-time rendering of the space battle. The actual C++ ECS ticks every frame — SDL2 draws the result. Frame time shown is the real end-to-end cost.
+Real-time rendering of the space battle. The ECS ticks every frame; SDL2 draws the result. Frame time shown is the real end-to-end cost.
 
 ```bash
 build/Release/visual_demo.exe
 build/Release/visual_demo.exe --wave-size 100 --turrets 8
 ```
-
-**Controls:**
 
 | Key | Action |
 |---|---|
@@ -220,108 +321,35 @@ build/Release/visual_demo.exe --wave-size 100 --turrets 8
 | + / - | Increase / decrease wave size |
 | Escape | Quit |
 
-## FAT-P Component Usage
-
-19 FAT-P components integrated with architectural justification:
-
-| FAT-P Component | ECS Role | Phase |
-|---|---|---|
-| **StrongId** | Type-safe Entity handles (64-bit: index + generation) | 1 |
-| **SparseSetWithData** | O(1) component storage with cache-friendly dense iteration | 1 |
-| **SlotMap** | Entity allocator with generational ABA safety | 1 |
-| **FastHashMap** | Type-erased component store registry | 1 |
-| **SmallVector** | Stack-allocated entity query results | 1 |
-| **Signal** | Observer pattern for entity/component lifecycle events | 2 |
-| **ThreadPool** | Work-stealing parallel system execution | 2 |
-| **BitSet** | Component masks for archetype matching and dependency analysis | 2 |
-| **WorkQueue** | Job dispatch (via ThreadPool internals) | 2 |
-| **ObjectPool** | Per-frame temporary allocator with bulk reset | 3 |
-| **StringPool** | Interned entity names for pointer-equality comparison | 3 |
-| **FlatMap** | Sorted name-to-entity mapping for debug/editor tools | 3 |
-| **JsonLite** | Data-driven entity template definitions | 3 |
-| **StateMachine** | Compile-time AI state machines with context binding | 3 |
-| **FeatureManager** | Runtime system enable/disable toggles | 3 |
-| **CheckedArithmetic** | Overflow-safe health/damage/score calculations | 3 |
-| **AlignedVector** | SIMD-friendly aligned component storage | 3 |
-| **LockFreeQueue** | Thread-safe parallel command buffer | 2 |
-| **CircularBuffer** | Available for deferred command queues | — |
-
-## Architecture
-
-**Entity** is a 64-bit StrongId. Lower 32 bits are the slot index, upper 32 are the generation counter. This enables O(1) ABA-safe entity validation via the SlotMap allocator.
-
-**ComponentStore\<T\>** wraps SparseSetWithData with an EntityIndex policy that extracts the 32-bit slot index for sparse array indexing while storing full 64-bit entities in the dense array.
-
-**View\<Ts...\>** iterates the intersection of component stores. Compile-time pivot dispatch selects the smallest store as the iteration driver, probing the others with O(1) `has()`.
-
-**EventBus** provides Signal-based lifecycle events (onEntityCreated, onEntityDestroyed, onComponentAdded\<T\>, onComponentRemoved\<T\>). Lazy signal creation means no overhead for unobserved component types.
-
-**Scheduler** analyzes system read/write ComponentMasks via BitSet intersection to identify non-conflicting systems and runs them in parallel on the ThreadPool.
-
-**CommandBuffer** records structural mutations during iteration. Flush applies them atomically between frames. ParallelCommandBuffer adds mutex protection for multi-threaded systems.
-
-**FrameAllocator** wraps ObjectPool for per-frame temporary allocations (collision pairs, spatial query results) with O(1) acquire and bulk releaseAll().
-
-**EntityNames** provides bidirectional name-to-entity mapping with StringPool interning and FlatMap sorted iteration.
-
-**TemplateRegistry** parses JSON entity definitions via JsonLite and stamps out entities through registered ComponentFactory callbacks.
-
-**SystemToggle** wraps FeatureManager for runtime system enable/disable without recompilation.
-
-**SafeMath** provides clamped arithmetic via CheckedArithmetic with gameplay helpers (applyDamage, applyHealing, addScore) that saturate instead of overflowing.
-
-## Files
-
-```
-include/fatp_ecs/
-├── Entity.h              — StrongId-based entity type + EntityIndex policy
-├── TypeId.h              — Atomic compile-time type-to-integer mapping
-├── ComponentMask.h       — BitSet wrapper for archetype matching
-├── ComponentStore.h      — SparseSetWithData wrapper with entity tracking
-├── EventBus.h            — Signal-based lifecycle events
-├── Registry.h            — Central coordinator (SlotMap + FastHashMap)
-├── View.h                — Multi-component iteration with pivot dispatch
-├── CommandBuffer.h       — Deferred operations (single + parallel)
-├── CommandBuffer_Impl.h  — Registry-dependent implementations
-├── Scheduler.h           — ThreadPool-based parallel system execution
-├── FrameAllocator.h      — ObjectPool-backed per-frame temp allocator
-├── EntityNames.h         — StringPool + FlatMap entity naming
-├── EntityTemplate.h      — JsonLite-driven entity spawning
-├── EntityTemplate_Impl.h — Registry-dependent template implementations
-├── SystemToggle.h        — FeatureManager-backed system toggles
-├── SafeMath.h            — CheckedArithmetic gameplay math
-└── FatpEcs.h             — Umbrella header
-
-bench/
-└── benchmark.cpp         — EnTT comparison (FatPBenchmarkRunner, round-robin)
-
-demo/
-├── Simulation.h          — Shared simulation logic (components, AI, systems)
-├── main.cpp              — Terminal demo (headless, prints stats)
-└── visual_main.cpp       — SDL2 visual demo (real-time rendering)
-
-tests/
-├── test_ecs.cpp          — Phase 1: Core ECS (27 tests)
-├── test_ecs_phase2.cpp   — Phase 2: Events & Parallelism (37 tests)
-├── test_ecs_phase3.cpp   — Phase 3: Gameplay Infrastructure (28 tests)
-└── test_clear.cpp        — Registry::clear() stress tests
-```
+---
 
 ## Tests
 
-17 test suites, all passing across the full CI matrix.
+18 test suites, 539 tests, all passing across the full CI matrix.
 
 ```
 Phase 1 — Core ECS:                27 passed
 Phase 2 — Events & Parallelism:    37 passed
 Phase 3 — Gameplay Infrastructure: 28 passed
-Exclude filters:                   (included in phase suites)
-Patch / Observer / Sort:           (included in phase suites)
-New API (replace, ctx, view fix):  19 passed
-NonOwningGroup:                    17 passed
-...and 10 additional targeted suites
-Total:                             465+ passed
+Exclude filters:                   15 passed
+Patch:                             15 passed
+Observer:                          21 passed
+OwningGroup:                       16 passed
+Sort:                              15 passed
+Snapshot:                          15 passed
+Handle:                            20 passed
+EntityCopy:                        16 passed
+ProcessScheduler:                  20 passed
+Clear stress:                     138 passed
+RuntimeView:                       17 passed
+StoragePolicy:                     65 passed
+New API:                           16 passed
+NonOwningGroup:                    14 passed
+EnTT parity:                       44 passed
+Total:                            539 passed
 ```
+
+---
 
 ## CI
 
