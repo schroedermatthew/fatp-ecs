@@ -152,6 +152,13 @@ if(FATP_ECS_BUILD_TESTS)
         target_compile_options(test_new_api PRIVATE ${FATP_ECS_WARNING_FLAGS})
         add_test(NAME test_new_api COMMAND test_new_api)
     endif()
+
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_non_owning_group.cpp")
+        add_executable(test_non_owning_group tests/test_non_owning_group.cpp)
+        target_link_libraries(test_non_owning_group PRIVATE fatp_ecs)
+        target_compile_options(test_non_owning_group PRIVATE ${FATP_ECS_WARNING_FLAGS})
+        add_test(NAME test_non_owning_group COMMAND test_non_owning_group)
+    endif()
 endif()
 
 # ==============================================================================

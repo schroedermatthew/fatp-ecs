@@ -35,6 +35,7 @@
 #include "Entity.h"
 #include "EventBus.h"
 #include "Observer.h"
+#include "NonOwningGroup.h"
 #include "OwningGroup.h"
 #include "RuntimeView.h"
 #include "StoragePolicy.h"
@@ -679,6 +680,52 @@ public:
         return *raw;
     }
 
+    /**
+     * @brief Create (or retrieve) a non-owning group over the given component types.
+     *
+     * A non-owning group tracks which entities have all listed types but does
+     * NOT rearrange any ComponentStore's dense array. This means:
+     *   - No ownership conflicts — the same types can appear in Views, sorts,
+     *     other non-owning groups, or be owned by an OwningGroup.
+     *   - Iteration performs one sparse lookup per component per entity
+     *     (slightly slower than OwningGroup but still faster than View for
+     *     membership-heavy queries, as membership is pre-filtered).
+     *
+     * @tparam Ts  Component types to track (1 or more).
+     * @return Reference to the NonOwningGroup. The Registry owns its lifetime.
+     *
+     * @note Calling non_owning_group<A, B>() a second time with the same
+     *       types returns the existing group rather than creating a new one.
+     *
+     * @example
+     * @code
+     *   auto& grp = registry.non_owning_group<Position, Velocity>();
+     *   grp.each([](Entity e, Position& p, Velocity& v) {
+     *       p.x += v.dx;
+     *       p.y += v.dy;
+     *   });
+     * @endcode
+     */
+    template <typename... Ts>
+    [[nodiscard]] NonOwningGroup<Ts...>& non_owning_group()
+    {
+        // Use a distinct key namespace from owning groups by XOR-mixing a
+        // sentinel so non_owning_group<A,B> and group<A,B> coexist safely.
+        const TypeId key = nonOwningGroupKey<Ts...>();
+
+        auto* existing = mNonOwningGroups.find(key);
+        if (existing != nullptr)
+        {
+            return *static_cast<NonOwningGroup<Ts...>*>(existing->get());
+        }
+
+        auto grp = std::make_unique<NonOwningGroup<Ts...>>(
+            ensureStore<Ts>()..., mEvents);
+        auto* raw = static_cast<NonOwningGroup<Ts...>*>(grp.get());
+        mNonOwningGroups.insert(key, std::move(grp));
+        return *raw;
+    }
+
     // =========================================================================
     // Sorting
     // =========================================================================
@@ -1189,6 +1236,18 @@ private:
         return key;
     }
 
+    /// @brief Distinct key namespace for non-owning groups.
+    /// XOR-mixes a sentinel so non_owning_group<A,B> and group<A,B>
+    /// hash to different keys and can safely coexist in separate maps.
+    template <typename... Ts>
+    TypeId nonOwningGroupKey()
+    {
+        constexpr TypeId kSentinel = 0xdeadbeefcafeULL;
+        TypeId key = 0xcbf29ce484222325ULL ^ kSentinel;
+        ((key = (key ^ typeId<Ts>()) * 0x100000001b3ULL), ...);
+        return key;
+    }
+
     void markOwned(TypeId tid)
     {
         mOwnedTypes.insert(tid, true);
@@ -1230,6 +1289,9 @@ private:
 
     /// @brief Type-erased owning groups, keyed by group signature hash.
     fat_p::FastHashMap<TypeId, std::unique_ptr<IOwningGroup>> mGroups;
+
+    /// @brief Type-erased non-owning groups, keyed by group signature hash.
+    fat_p::FastHashMap<TypeId, std::unique_ptr<INonOwningGroup>> mNonOwningGroups;
 
     /// @brief TypeIds claimed by an owning group — for conflict detection.
     fat_p::FastHashMap<TypeId, bool> mOwnedTypes;

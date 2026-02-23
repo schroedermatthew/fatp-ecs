@@ -12,6 +12,7 @@
 #include "ComponentStore.h"
 #include "EventBus.h"
 #include "Observer.h"
+#include "NonOwningGroup.h"
 #include "OwningGroup.h"
 #include "Registry.h"
 #include "RuntimeView.h"
