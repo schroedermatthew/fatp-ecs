@@ -256,15 +256,19 @@ public:
             return false;
         }
 
-        // Fire destruction event before removing anything
-        if (mEvents.onEntityDestroyed.slotCount() > 0)
-        {
-            mEvents.onEntityDestroyed.emit(entity);
-        }
-
+        // Remove all components first, firing onComponentRemoved for each.
+        // Observers that react to OnRemoved<T> will see the entity while it
+        // is still alive and can safely erase it from their dirty sets.
+        // onEntityDestroyed fires last, after all component state is gone,
+        // so listeners receive a clean post-removal notification.
         for (auto it = mStores.begin(); it != mStores.end(); ++it)
         {
             it.value()->removeAndNotify(entity, mEvents);
+        }
+
+        if (mEvents.onEntityDestroyed.slotCount() > 0)
+        {
+            mEvents.onEntityDestroyed.emit(entity);
         }
 
         EntityHandle handle{EntityTraits::index(entity),
@@ -1170,6 +1174,19 @@ public:
             it.value()->clear();
         }
         mEntities.clear();
+
+        // Reset group membership state. Component stores and entity allocator
+        // are now empty, so group iterators must not walk stale indices.
+        // Signal connections are preserved: groups will re-populate as new
+        // entities are added after the clear.
+        for (auto it = mGroups.begin(); it != mGroups.end(); ++it)
+        {
+            it.value()->reset();
+        }
+        for (auto it = mNonOwningGroups.begin(); it != mNonOwningGroups.end(); ++it)
+        {
+            it.value()->reset();
+        }
     }
 
     /**

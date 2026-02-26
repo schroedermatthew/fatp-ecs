@@ -66,6 +66,15 @@ public:
     IOwningGroup& operator=(const IOwningGroup&) = delete;
     IOwningGroup(IOwningGroup&&) = delete;
     IOwningGroup& operator=(IOwningGroup&&) = delete;
+
+    /// @brief Reset group membership state without destroying the group object.
+    ///
+    /// Called by Registry::clear() after all component stores and the entity
+    /// allocator have been cleared. Sets mGroupSize to 0 so that each() does
+    /// not walk stale dense-array indices. Signal connections are preserved:
+    /// the group will re-populate automatically as new entities gain the
+    /// required components after the registry is repopulated.
+    virtual void reset() noexcept = 0;
 };
 
 // =============================================================================
@@ -117,6 +126,20 @@ public:
     OwningGroup& operator=(const OwningGroup&) = delete;
     OwningGroup(OwningGroup&&) noexcept = default;
     OwningGroup& operator=(OwningGroup&&) noexcept = default;
+
+    // =========================================================================
+    // Reset (called by Registry::clear())
+    // =========================================================================
+
+    /// @brief Zero the group size so each() does not walk stale indices.
+    ///
+    /// Does NOT disconnect signals or destroy stores. After Registry::clear()
+    /// repopulates entities, onComponentAdded will fire and the group will
+    /// re-seed normally via moveIntoGroup().
+    void reset() noexcept override
+    {
+        mGroupSize = 0;
+    }
 
     // =========================================================================
     // Iteration

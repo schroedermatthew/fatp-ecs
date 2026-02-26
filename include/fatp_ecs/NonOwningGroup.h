@@ -66,6 +66,14 @@ public:
     INonOwningGroup& operator=(const INonOwningGroup&) = delete;
     INonOwningGroup(INonOwningGroup&&) = delete;
     INonOwningGroup& operator=(INonOwningGroup&&) = delete;
+
+    /// @brief Clear tracked entity list without destroying the group object.
+    ///
+    /// Called by Registry::clear() after all component stores and the entity
+    /// allocator have been cleared. Empties mEntities so that each() is a
+    /// no-op on a fresh registry. Signal connections are preserved: the group
+    /// will re-populate via onComponentAdded as new entities are created.
+    virtual void reset() noexcept = 0;
 };
 
 // =============================================================================
@@ -114,6 +122,20 @@ public:
     NonOwningGroup& operator=(const NonOwningGroup&) = delete;
     NonOwningGroup(NonOwningGroup&&) noexcept = default;
     NonOwningGroup& operator=(NonOwningGroup&&) noexcept = default;
+
+    // =========================================================================
+    // Reset (called by Registry::clear())
+    // =========================================================================
+
+    /// @brief Clear tracked entity list so each() is a no-op after Registry::clear().
+    ///
+    /// Does NOT disconnect signals or destroy stores. After Registry::clear()
+    /// repopulates entities, onComponentAdded will fire and mEntities will
+    /// re-fill normally.
+    void reset() noexcept override
+    {
+        mEntities.clear();
+    }
 
     // =========================================================================
     // Iteration

@@ -11,6 +11,16 @@
 // stores into a flat binary buffer. RegistrySnapshotLoader deserializes that
 // buffer into a cleared registry, recreating entities and components.
 //
+// Scope — in-process only:
+//   TypeIds are assigned at runtime via a global atomic counter the first time
+//   each component type is used. The numeric TypeId for a given type is
+//   consistent within a single process run but is NOT stable across restarts,
+//   recompiles, or link-order changes. Snapshots are therefore safe for
+//   in-process use cases (rollback, rewind, level-reload) but must NOT be
+//   used as persistent save files or sent across process boundaries.
+//   For persistence or cross-process transport, register components with
+//   stable application-assigned IDs and serialize those instead.
+//
 // Entity handle remapping (Path A):
 //   Serialized entities are stored as raw uint64_t values (packed index+generation).
 //   On restore each serialized entity is recreated via registry.create(), producing
