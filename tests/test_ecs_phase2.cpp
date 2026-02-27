@@ -209,21 +209,26 @@ void test_scoped_connection_disconnect()
 
 void test_destroy_fires_events_before_removal()
 {
+    // fatp-ecs fires onComponentRemoved for each component *before*
+    // onEntityDestroyed. This prevents an Observer race where the destroyed
+    // handler removes the entity from its dirty set, then the subsequent
+    // onComponentRemoved re-inserts the now-dead entity.
+    //
+    // Contract: when onEntityDestroyed fires, component stores have already
+    // removed the entity (has<T>() returns false).
     Registry reg;
-    bool hadPosition = false;
+    bool componentAlreadyGone = false;
 
     auto conn = reg.events().onEntityDestroyed.connect(
         [&](Entity e) {
-            // At destruction time, the entity should still be alive
-            // and its components accessible
-            hadPosition = reg.has<Position>(e);
+            componentAlreadyGone = !reg.has<Position>(e);
         });
 
     Entity e = reg.create();
     reg.add<Position>(e, 1.0f, 2.0f);
     reg.destroy(e);
 
-    TEST_ASSERT(hadPosition == true, "hadPosition == true");
+    TEST_ASSERT(componentAlreadyGone == true, "componentAlreadyGone == true");
 }
 
 // =============================================================================

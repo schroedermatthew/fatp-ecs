@@ -260,7 +260,8 @@ public:
         // Observers that react to OnRemoved<T> will see the entity while it
         // is still alive and can safely erase it from their dirty sets.
         // onEntityDestroyed fires last, after all component state is gone,
-        // so listeners receive a clean post-removal notification.
+        // ensuring that OnRemoved listeners cannot re-insert a dead entity
+        // into observer dirty sets.
         for (auto it = mStores.begin(); it != mStores.end(); ++it)
         {
             it.value()->removeAndNotify(entity, mEvents);
