@@ -315,19 +315,38 @@ public:
     {
         auto* store = ensureStore<T>();
 
-        // emplace() delegates to SparseSetWithData::tryEmplace, which does a
-        // single sparse lookup and returns nullptr if the entity already has
-        // this component. The previous pattern called tryGet() first (one
-        // sparse lookup) then emplace() (another), doing the duplicate check
-        // twice. Using emplace() directly halves the sparse-array traffic on
-        // the hot path.
+        // Hot path: bypass virtual emplaceImpl for default-policy stores.
         //
-        // Contract preserved: if entity already has T, the existing component
-        // is returned unchanged and no event is fired.
-        T* inserted = store->emplaceComponent(entity, std::forward<Args>(args)...);
-        if (inserted == nullptr)
+        // TypedIComponentStore<T>::emplaceComponent() builds a T temporary then
+        // calls virtual emplaceImpl(entity, T&&), which the compiler cannot inline
+        // through (the vtable call blocks devirtualization on Clang/MSVC). For the
+        // common case (no custom storage policy), we can downcast to the concrete
+        // ComponentStore<T>* and call its non-virtual emplace() directly — this
+        // gives the compiler a straight path to mStorage.tryEmplace(entity, args...)
+        // with perfect forwarding and no intermediate object.
+        //
+        // For custom-policy stores (registered via useStorage<T, P>()) we fall back
+        // to the virtual path since the concrete type is ComponentStore<T, P>.
+        //
+        // Contract preserved: if entity already has T, the existing component is
+        // returned unchanged and no event is fired.
+        T* inserted;
+        if (isDefaultPolicy(typeId<T>()))
         {
-            return *store->tryGetComponent(entity);
+            auto* concrete = static_cast<ComponentStore<T>*>(store);
+            inserted = concrete->emplace(entity, std::forward<Args>(args)...);
+            if (inserted == nullptr)
+            {
+                return *concrete->tryGet(entity);
+            }
+        }
+        else
+        {
+            inserted = store->emplaceComponent(entity, std::forward<Args>(args)...);
+            if (inserted == nullptr)
+            {
+                return *store->tryGetComponent(entity);
+            }
         }
 
         mEvents.emitComponentAdded<T>(entity, *inserted);
@@ -386,17 +405,36 @@ public:
     T& emplace_or_replace(Entity entity, Args&&... args)
     {
         auto* store = ensureStore<T>();
-        T* existing = store->tryGetComponent(entity);
-        if (existing != nullptr)
-        {
-            *existing = T(std::forward<Args>(args)...);
-            mEvents.emitComponentUpdated<T>(entity, *existing);
-            return *existing;
-        }
 
-        T* inserted = store->emplaceComponent(entity, std::forward<Args>(args)...);
-        mEvents.emitComponentAdded<T>(entity, *inserted);
-        return *inserted;
+        // Use direct non-virtual path for default-policy stores (same reasoning
+        // as add<T> — bypasses the virtual emplaceImpl and avoids the T temporary).
+        if (isDefaultPolicy(typeId<T>()))
+        {
+            auto* concrete = static_cast<ComponentStore<T>*>(store);
+            T* existing = concrete->tryGet(entity);
+            if (existing != nullptr)
+            {
+                *existing = T(std::forward<Args>(args)...);
+                mEvents.emitComponentUpdated<T>(entity, *existing);
+                return *existing;
+            }
+            T* inserted = concrete->emplace(entity, std::forward<Args>(args)...);
+            mEvents.emitComponentAdded<T>(entity, *inserted);
+            return *inserted;
+        }
+        else
+        {
+            T* existing = store->tryGetComponent(entity);
+            if (existing != nullptr)
+            {
+                *existing = T(std::forward<Args>(args)...);
+                mEvents.emitComponentUpdated<T>(entity, *existing);
+                return *existing;
+            }
+            T* inserted = store->emplaceComponent(entity, std::forward<Args>(args)...);
+            mEvents.emitComponentAdded<T>(entity, *inserted);
+            return *inserted;
+        }
     }
 
     template <typename T>
@@ -623,14 +661,27 @@ public:
     T& get_or_emplace(Entity entity, Args&&... args)
     {
         auto* store = ensureStore<T>();
-        T* existing = store->tryGetComponent(entity);
-        if (existing != nullptr)
+
+        // Direct non-virtual path for default-policy stores.
+        if (isDefaultPolicy(typeId<T>()))
         {
-            return *existing;
+            auto* concrete = static_cast<ComponentStore<T>*>(store);
+            T* existing = concrete->tryGet(entity);
+            if (existing != nullptr)
+                return *existing;
+            T* component = concrete->emplace(entity, std::forward<Args>(args)...);
+            mEvents.emitComponentAdded<T>(entity, *component);
+            return *component;
         }
-        T* component = store->emplace(entity, std::forward<Args>(args)...);
-        mEvents.onComponentAdded<T>().emit(entity, *component);
-        return *component;
+        else
+        {
+            T* existing = store->tryGetComponent(entity);
+            if (existing != nullptr)
+                return *existing;
+            T* component = store->emplaceComponent(entity, std::forward<Args>(args)...);
+            mEvents.emitComponentAdded<T>(entity, *component);
+            return *component;
+        }
     }
 
     // =========================================================================
@@ -1383,6 +1434,11 @@ public:
         if (tid < kStoreCacheSize)
         {
             mStoreCache[tid] = raw;
+            mCustomPolicyMask[tid] = true;
+        }
+        else
+        {
+            mCustomPolicies.insert(tid, true);
         }
     }
 
@@ -1667,6 +1723,16 @@ private:
         mOwnedTypes.insert(tid, true);
     }
 
+    /// @brief Returns true if no custom storage policy was registered for this TypeId.
+    /// When true, the IComponentStore* in mStoreCache can be safely downcast to
+    /// ComponentStore<T, DefaultStoragePolicy>* for direct non-virtual emplace access.
+    bool isDefaultPolicy(TypeId tid) const noexcept
+    {
+        if (tid < kStoreCacheSize)
+            return !mCustomPolicyMask[tid];
+        return mCustomPolicies.find(tid) == nullptr;
+    }
+
     template <typename... Ts>
     void assertNoOwnershipConflicts()
     {
@@ -1700,6 +1766,14 @@ private:
 
     /// @brief Flat array cache for O(1) component store lookup by TypeId.
     std::array<IComponentStore*, kStoreCacheSize> mStoreCache{};
+
+    /// @brief Tracks TypeIds registered with a custom storage policy via useStorage<T,P>().
+    /// TypeIds NOT in this set were created by ensureStore<T>() with DefaultStoragePolicy,
+    /// so their IComponentStore* can be safely downcast to ComponentStore<T>*.
+    /// The flat bitset covers the first 64 TypeIds (all benchmark components fall here);
+    /// overflow TypeIds are tracked in the FastHashMap.
+    std::array<bool, kStoreCacheSize> mCustomPolicyMask{};
+    fat_p::FastHashMap<TypeId, bool> mCustomPolicies;
 
     /// @brief Type-erased owning groups, keyed by group signature hash.
     fat_p::FastHashMap<TypeId, std::unique_ptr<IOwningGroup>> mGroups;
