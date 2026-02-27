@@ -18,45 +18,45 @@ fatp-ecs uses 64-bit entity IDs throughout. All comparisons are against EnTT con
 
 ### vs EnTT-64 at scale (GCC-14, GitHub Actions)
 
-Rows 1–10: N=1M entities. Fragmented and Churn max at N=100K.
+Rows 1–10: N=1M entities. Fragmented and Churn at N=100K.
 
 | Category | fatp-ecs | EnTT-64 | ratio |
 |---|---|---|---|
-| Create entities | 7.94 ns | 12.73 ns | **0.62x** |
-| Destroy entities | 8.91 ns | 12.86 ns | **0.69x** |
-| Add 1 component | 18.95 ns | 13.68 ns | 1.39x |
-| Add 3 components | 45.77 ns | 41.08 ns | 1.11x |
-| Remove component | 5.83 ns | 15.17 ns | **0.38x** |
-| Get component | 3.13 ns | 4.87 ns | **0.64x** |
-| 1-comp iteration | 0.68 ns | 0.93 ns | **0.73x** |
-| 2-comp iteration | 1.35 ns | 4.13 ns | **0.33x** |
-| Sparse iteration | 1.70 ns | 4.22 ns | **0.40x** |
-| 3-comp iteration | 2.96 ns | 7.69 ns | **0.38x** |
-| Fragmented iter  | 0.64 ns | 0.95 ns | **0.67x** |
-| Churn (create+destroy) | 16.40 ns | 31.22 ns | **0.53x** |
+| Create entities | 7.76 ns | 12.46 ns | **0.62x** |
+| Destroy entities | 6.52 ns | 12.91 ns | **0.51x** |
+| Add 1 component | 14.20 ns | 13.58 ns | 1.05x |
+| Add 3 components | 41.61 ns | 40.00 ns | 1.04x |
+| Remove component | 5.70 ns | 15.81 ns | **0.36x** |
+| Get component | 3.14 ns | 4.85 ns | **0.65x** |
+| 1-comp iteration | 0.66 ns | 0.88 ns | **0.75x** |
+| 2-comp iteration | 1.34 ns | 4.11 ns | **0.33x** |
+| Sparse iteration | 1.56 ns | 4.20 ns | **0.37x** |
+| 3-comp iteration | 3.09 ns | 7.64 ns | **0.40x** |
+| Fragmented iter  | 0.64 ns | 0.83 ns | **0.77x** |
+| Churn (create+destroy) | 16.03 ns | 31.41 ns | **0.51x** |
 
 **Bold** = fatp-ecs faster. Ratio below 1.0x means fatp-ecs wins by that factor.
 
-Add component is slower because fatp-ecs fires lifecycle events on every `add()`. This is deliberate — `onComponentAdded<T>` is always wired up, not opt-in. The event system costs ~3–4 ns per add on GCC. Everything else is faster.
+Add component is slightly slower because fatp-ecs fires lifecycle events on every `add()`. This is deliberate — `onComponentAdded<T>` is always wired up, not opt-in. The overhead is ~0.6–0.7 ns per add on GCC at scale. Everything else is faster.
 
 ### Cross-compiler summary (N=1M except Frag/Churn at N=100K, vs EnTT-64)
 
 | Category | GCC-13 | GCC-14 | Clang-16 | Clang-17 | MSVC |
 |---|---|---|---|---|---|
-| Create | **0.54x** | **0.62x** | **0.62x** | **0.63x** | **0.70x** |
-| Destroy | **0.54x** | **0.69x** | **0.57x** | **0.54x** | **0.40x** |
-| Add 1 | 1.49x | 1.39x | 1.18x | 1.21x | 1.06x |
-| Add 3 | 1.33x | 1.11x | 1.03x | 1.07x | 1.14x |
-| Remove | **0.35x** | **0.38x** | **0.50x** | **0.45x** | **0.30x** |
-| Get | **0.64x** | **0.64x** | **0.89x** | **0.90x** | **0.99x** |
-| 1-comp iter | **0.74x** | **0.73x** | **0.63x** | **0.68x** | **0.63x** |
-| 2-comp iter | **0.34x** | **0.33x** | **0.69x** | **0.63x** | **0.31x** |
-| Sparse iter | **0.48x** | **0.40x** | **0.63x** | **0.58x** | **0.27x** |
-| 3-comp iter | **0.39x** | **0.38x** | **0.61x** | **0.60x** | **0.43x** |
-| Fragmented | **0.68x** | **0.67x** | **0.69x** | **0.62x** | **0.69x** |
-| Churn | **0.46x** | **0.53x** | **0.50x** | **0.50x** | **0.36x** |
+| Create | **0.53x** | **0.62x** | **0.61x** | **0.61x** | **0.75x** |
+| Destroy | **0.51x** | **0.51x** | **0.59x** | **0.53x** | **0.44x** |
+| Add 1 | 1.19x | 1.05x | **0.96x** | **0.99x** | **0.90x** |
+| Add 3 | 1.15x | 1.04x | **0.91x** | **0.94x** | 1.01x |
+| Remove | **0.37x** | **0.36x** | **0.49x** | **0.48x** | **0.33x** |
+| Get | **0.62x** | **0.65x** | **0.92x** | **0.89x** | 1.07x |
+| 1-comp iter | **0.67x** | **0.75x** | **0.62x** | **0.64x** | **0.49x** |
+| 2-comp iter | **0.32x** | **0.33x** | **0.68x** | **0.62x** | **0.31x** |
+| Sparse iter | **0.38x** | **0.37x** | **0.63x** | **0.52x** | **0.32x** |
+| 3-comp iter | **0.40x** | **0.40x** | **0.63x** | **0.62x** | **0.44x** |
+| Fragmented | **0.76x** | **0.77x** | **0.66x** | **0.68x** | **0.66x** |
+| Churn | **0.45x** | **0.51x** | **0.49x** | **0.50x** | **0.34x** |
 
-The iteration advantage is consistent everywhere. MSVC shows the strongest gains in sparse iteration (0.27x) and churn (0.36x). The event system overhead on add narrows at Clang/MSVC due to better inlining.
+The iteration advantage is consistent across all five compilers. MSVC shows the strongest gains in sparse iteration (0.32x) and churn (0.34x). Add component is at or near parity on Clang and MSVC — the event system overhead is effectively inlined away on those toolchains. GCC-13 shows a modest add overhead; entity creation is not a per-frame hot path.
 
 ### Running benchmarks
 
