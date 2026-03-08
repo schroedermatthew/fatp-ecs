@@ -4,9 +4,60 @@ An ECS built to show what [FAT-P](https://github.com/schroedermatthew/FatP) can 
 
 The premise: take a library of focused, production-quality components — sparse sets, slot maps, signals, hash maps — and assemble them into something non-trivial. The result should be competitive with EnTT, the industry-standard ECS, out of the box. Not as a nice-to-have. As a baseline expectation.
 
-This is that result. 19 FAT-P components. EnTT API parity. Faster on most benchmarks. Built in a weekend with an AI pair-programmer.
+This is that result. 19 FAT-P components. EnTT API parity. Faster on most benchmarks. Built in a weekend by an AI working autonomously under the Fat-P guidelines.
 
 [![CI](https://github.com/schroedermatthew/fatp-ecs/actions/workflows/ci.yml/badge.svg)](https://github.com/schroedermatthew/fatp-ecs/actions/workflows/ci.yml)
+
+---
+
+## What this is — and what it isn't
+
+fatp-ecs is not a replacement for EnTT. EnTT is a mature, battle-tested library with years of
+development and a large community behind it. If you need a production ECS today, use EnTT.
+
+fatp-ecs exists to answer a different question: *what does it look like when you compose FAT-P
+components into something non-trivial?* The ECS is the vehicle. The FAT-P composition is the
+point. SparseSet, SlotMap, Signal, FastHashMap — these components were not designed for an ECS.
+They were designed to be independently correct under adversarial conditions. What you get when
+you assemble them is a system that is competitive with the industry standard not because it was
+tuned against it, but because the foundations were sound.
+
+The benchmark numbers are not a scorecard against EnTT. They are evidence that the primitives work.
+
+### EnTT compatibility
+
+fatp-ecs targets the EnTT API closely enough that porting an existing EnTT project requires
+changing roughly one line per fifty source files — namespace and header substitutions. This is
+intentional: API compatibility provides a concrete, verifiable measure of completeness. It does
+not mean fatp-ecs and EnTT make the same design choices. Where they diverge — fixed 64-bit
+entities backed by a generational SlotMap, a central EventBus instead of per-storage signal
+mixins, a runtime atomic type-ID generator instead of compile-time hashing — those are
+deliberate decisions, not gaps.
+
+---
+
+## How it was built
+
+fatp-ecs was designed and implemented autonomously by Claude (Anthropic) under the
+[Fat-P development guidelines](guidelines/). The guidelines — covering coding standards, naming
+conventions, test structure, benchmark methodology, CI workflow, documentation style, and AI
+operational behavior — are the same ones that govern the parent FAT-P library. They transfer
+with the project.
+
+The human's role across the Fat-P project is consistent: accept, reject, flag. Architecture,
+implementation, tests, benchmarks, and documentation are AI work. The guidelines themselves are
+AI-to-AI communication — written by AI instances to constrain future AI instances, not written
+by the project owner. The human who initiated the project has never read them.
+
+After the initial autonomous build, adversarial review was conducted by other AI models to
+identify correctness issues, implementation gaps, and missed edge cases. This multi-model review
+mirrors how the parent library is developed: Claude as primary architect, other models as
+reviewers with complementary blind spots.
+
+The implication for readers: the code, tests, benchmarks, and documentation in this repository
+were not written by a human and reviewed by AI. They were written by AI, reviewed by AI, and
+accepted or rejected by a human whose input is directional — "don't do that again" — not
+implementational.
 
 ---
 
